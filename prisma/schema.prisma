@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id         String   @id @default(uuid()) @db.Uuid
+
+  email      String?  @unique
+  phone      String?  @unique
+
+  fullName   String?
+  avatarUrl  String?
+
+  role       user_role @default(USER)
+  isActive   Boolean  @default(true)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  fcmToken   String?
+
+  authProviders AuthProvider[]
+  sessions      UserSession[]
+  addresses     Address[]
+  bookings      Booking[]
+}
+enum user_role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model AuthProvider {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @db.Uuid
+
+  provider           String
+  providerUserId     String
+
+  providerEmail      String?
+  providerAvatarUrl  String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model UserSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model RevokedToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  jti       String   @unique
+  userId    String   @db.Uuid
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Service {
+  id            String   @id
+  slug          String   @unique
+  title         String
+  subtitle      String?
+  description   String?
+
+  startingPrice Int
+  currency      String
+
+  imageUrl      String?
+  iconUrl       String?
+  displayType   DisplayType @default(ICON)
+  colorClass    String?
+
+  tag           String?
+  isPopular     Boolean   @default(false)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  bookings      Booking[]
+}
+
+enum DisplayType {
+  IMAGE
+  ICON
+}
+
+model Address {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+
+  // display
+  label         String
+  // Denormalized string kept in DB (legacy/non-null constraint in some environments).
+  fullAddress   String
+
+  // geo (VERY IMPORTANT)
+  latitude      Float?
+  longitude     Float?
+
+  // structured address (from Google)
+  area          String?
+  city          String?
+  state         String?
+  pincode       String?
+
+  // user input (MOST IMPORTANT)
+  houseNumber   String?
+  building      String?
+  landmark      String?
+
+  // metadata
+  addressType   String?   // HOME / WORK / OTHER
+  contactName   String?
+  phone         String?
+
+  isDefault     Boolean   @default(false)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings      Booking[]
+
+  @@index([userId])
+}
+
+model Booking {
+  id          String   @id @default(uuid()) @db.Uuid
+
+  userId      String   @db.Uuid
+  serviceId   String
+  addressId   String   @db.Uuid
+
+  date        DateTime @db.Date
+  timeSlot    String
+  phone       String
+
+  price       Int
+  notes       String?
+
+  status      BookingStatus @default(PENDING)
+
+  partnerName      String?
+  partnerPhone     String?
+  rejectionReason  String?
+  partnerId String?  @db.Uuid
+  partner   Partner? @relation(fields: [partnerId], references: [id])
+
+  confirmedAt      DateTime?
+  cancelledAt      DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id])
+  service     Service  @relation(fields: [serviceId], references: [id])
+  address     Address  @relation(fields: [addressId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@index([date])
+  @@index([serviceId])
+  @@index([addressId])
+  @@index([status, date])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  CANCELLED_BY_ADMIN
+  CANCELLED_BY_USER
+}
+
+model Partner {
+  id         String   @id @default(uuid()) @db.Uuid
+  fullName   String
+  phone      String
+  email      String?
+  skills     String[] // corresponds to _text
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  bookings   Booking[] // relation (optional but recommended)
+}
