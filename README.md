@@ -78,6 +78,67 @@ $ mau deploy
 
 With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
 
+## Deploy On Render
+
+This repository includes a `render.yaml` blueprint for one-click setup on Render.
+
+### 1) Push repository to GitHub
+
+Render deploys directly from your GitHub repository.
+
+### 2) Create a Web Service in Render
+
+- In Render, choose **New +** -> **Blueprint**.
+- Select this repository.
+- Render will detect `render.yaml` and create:
+  - `doitnow-be` web service
+  - `doitnow-db` managed PostgreSQL database
+
+### 3) Set required environment variables
+
+In Render service settings, set these values:
+
+- `DATABASE_URL` (required in production)
+- `JWT_SECRET` (minimum 32 chars)
+- At least one Google OAuth client ID:
+  - `GOOGLE_CLIENT_ID` or `GOOGLE_WEB_CLIENT_ID` or `GOOGLE_ANDROID_CLIENT_ID`
+  - and/or admin variants:
+    `GOOGLE_ADMIN_CLIENT_ID`, `GOOGLE_ADMIN_WEB_CLIENT_ID`, `GOOGLE_ADMIN_ANDROID_CLIENT_ID`
+- If using catalog media uploads:
+  - `SUPABASE_URL`
+  - `SUPABASE_STORAGE_BUCKET`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+- If using Firebase:
+  - `FIREBASE_PROJECT_ID`
+  - `FIREBASE_CLIENT_EMAIL`
+  - `FIREBASE_PRIVATE_KEY`
+
+You can use `.env.example` as a reference template.
+
+Note: `DATABASE_URL` is auto-populated from `doitnow-db` by the blueprint.  
+If you want to keep using Supabase instead, override `DATABASE_URL` in Render with your Supabase connection string.
+
+### 4) Database migrations
+
+This project currently has no committed Prisma migrations in `prisma/migrations`.  
+If your target database is empty, initialize schema before using the API:
+
+```bash
+npx prisma db push
+```
+
+If you later add migrations, use:
+
+```bash
+npx prisma migrate deploy
+```
+
+### 5) Verify deployment
+
+- Open your Render service URL.
+- Hit `/` endpoint to confirm health response.
+- Check Render logs if startup fails due to missing env variables.
+
 ## Resources
 
 Check out a few resources that may come in handy when working with NestJS:
