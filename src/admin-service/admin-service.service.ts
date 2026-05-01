@@ -1,10 +1,17 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { DisplayType, Prisma, Service as ServiceRecord, user_role } from '@prisma/client';
+import {
+  BookingStatus,
+  DisplayType,
+  Prisma,
+  Service as ServiceRecord,
+  user_role,
+} from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,6 +32,8 @@ type AdminServiceItem = {
   colorClass: string | null;
   tag: string | null;
   isPopular: boolean;
+  isActive: boolean;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -224,6 +233,8 @@ export class AdminServiceService {
         colorClass: body.colorClass ?? null,
         tag: body.tag ?? null,
         isPopular: body.isPopular ?? false,
+        isActive: true,
+        deletedAt: null,
       },
       select: { id: true },
     });
@@ -266,6 +277,9 @@ export class AdminServiceService {
         body.colorClass === undefined ? undefined : body.colorClass ?? null,
       tag: body.tag === undefined ? undefined : body.tag ?? null,
       isPopular: body.isPopular,
+      // Any update to service content makes it active again if it was archived.
+      isActive: true,
+      deletedAt: null,
     };
 
     if (body.title !== undefined) {
@@ -294,21 +308,62 @@ export class AdminServiceService {
 
     const existing = await this.prisma.service.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, isActive: true },
     });
 
     if (!existing) {
       throw new NotFoundException('Service not found');
     }
 
-    const deleted = await this.prisma.service.delete({
-      where: { id },
-      select: { id: true },
+    const activeBookingCount = await this.prisma.booking.count({
+      where: {
+        serviceId: id,
+        status: {
+          in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        },
+      },
+    });
+
+    if (activeBookingCount > 0) {
+      throw new BadRequestException({
+        message:
+          'Cannot delete service while pending/approved bookings exist. Cancelled/completed bookings are allowed for deletion.',
+        errorCode: 'ACTIVE_BOOKINGS_EXIST',
+        data: {
+          serviceId: id,
+          activeBookingCount,
+          blockedStatuses: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+        },
+      });
+    }
+
+    if (!existing.isActive) {
+      return {
+        message: 'Service already deleted',
+        data: { id: existing.id },
+      };
+    }
+
+    const archived = await this.prisma.$transaction(async (tx) => {
+      await tx.partnerService.updateMany({
+        where: { serviceId: id },
+        data: { isActive: false },
+      });
+
+      return tx.service.update({
+        where: { id },
+        data: {
+          isActive: false,
+          deletedAt: new Date(),
+          isPopular: false,
+        },
+        select: { id: true },
+      });
     });
 
     return {
-      message: 'Service deleted successfully',
-      data: { id: deleted.id },
+      message: 'Service deleted successfully (archived for history)',
+      data: { id: archived.id },
     };
   }
 
@@ -331,6 +386,8 @@ export class AdminServiceService {
         colorClass: true,
         tag: true,
         isPopular: true,
+        isActive: true,
+        deletedAt: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -357,6 +414,8 @@ export class AdminServiceService {
       colorClass: service.colorClass,
       tag: service.tag,
       isPopular: service.isPopular,
+      isActive: service.isActive,
+      deletedAt: service.deletedAt ? service.deletedAt.toISOString() : null,
       createdAt: service.createdAt.toISOString(),
       updatedAt: service.updatedAt.toISOString(),
     };

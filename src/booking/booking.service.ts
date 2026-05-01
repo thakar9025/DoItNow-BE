@@ -63,7 +63,7 @@ export class BookingService {
     const [service, address, user] = await Promise.all([
       this.prisma.service.findUnique({
         where: { id: body.serviceId },
-        select: { id: true, title: true },
+        select: { id: true, title: true, isActive: true },
       }),
       this.prisma.address.findFirst({
         where: { id: body.addressId, userId },
@@ -77,6 +77,9 @@ export class BookingService {
 
     if (!service) {
       throw new NotFoundException('Service not found');
+    }
+    if (!service.isActive) {
+      throw new BadRequestException('Service is not available for booking');
     }
 
     if (!address) {

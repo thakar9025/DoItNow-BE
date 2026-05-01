@@ -44,10 +44,11 @@ export class CatalogService {
   async getCatalog(): Promise<CatalogResponse> {
     const [popularServices, otherServices] = await Promise.all([
       this.prisma.service.findMany({
-        where: { isPopular: true },
+        where: { isPopular: true, isActive: true },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.service.findMany({
+        where: { isActive: true },
         orderBy: { title: 'asc' },
       }),
     ]);

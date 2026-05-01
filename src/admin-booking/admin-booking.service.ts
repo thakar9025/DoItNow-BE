@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -122,11 +123,32 @@ export class AdminBookingService {
       throw new NotFoundException('Partner not found');
     }
 
+    if (!partner.isActive) {
+      throw new BadRequestException('Partner is inactive');
+    }
+
+    const partnerService = await this.prisma.partnerService.findFirst({
+      where: {
+        partnerId: body.partnerId,
+        serviceId: booking.serviceId,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+
+    if (!partnerService) {
+      throw new BadRequestException(
+        'Partner is not mapped to the requested service',
+      );
+    }
+
     return this.prisma.booking.update({
       where: { id: bookingId },
       data: {
         status: 'CONFIRMED' as unknown as Prisma.BookingUpdateInput['status'],
         partnerId: body.partnerId,
+        partnerName: partner.fullName,
+        partnerPhone: partner.phone,
         confirmedAt: new Date(),
       },
       include: {
@@ -153,6 +175,35 @@ export class AdminBookingService {
         status: 'CANCELLED_BY_ADMIN' as unknown as Prisma.BookingUpdateInput['status'],
         rejectionReason: body.reason,
         cancelledAt: new Date(),
+      },
+      include: {
+        user: true,
+        service: true,
+        address: true,
+        partner: true,
+      },
+    });
+  }
+
+  async completeBooking(userId: string, bookingId: string) {
+    await this.assertAdminAccess(userId);
+
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    if (booking.status !== 'CONFIRMED') {
+      throw new BadRequestException(
+        `Only approved bookings can be marked complete. Current status: ${booking.status}`,
+      );
+    }
+
+    return this.prisma.booking.update({
+      where: { id: bookingId },
+      data: {
+        status: 'COMPLETED' as unknown as Prisma.BookingUpdateInput['status'],
       },
       include: {
         user: true,

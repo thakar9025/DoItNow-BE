@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AdminAuthModule } from './admin-auth/admin-auth.module';
 import { AdminBookingModule } from './admin-booking/admin-booking.module';
+import { AdminPartnerModule } from './admin-partner/admin-partner.module';
 import { AdminServiceModule } from './admin-service/admin-service.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -25,6 +26,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AuthModule,
     AdminAuthModule,
     AdminBookingModule,
+    AdminPartnerModule,
     AdminServiceModule,
     BookingModule,
     CatalogModule,

@@ -45,4 +45,10 @@ export class AdminBookingController {
     const userId = request.auth.payload.userId;
     return this.adminBookingService.rejectBooking(userId, id, body);
   }
+
+  @Patch(':id/complete')
+  completeBooking(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
+    const userId = request.auth.payload.userId;
+    return this.adminBookingService.completeBooking(userId, id);
+  }
 }

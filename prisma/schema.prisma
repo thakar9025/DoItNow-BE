@@ -100,11 +100,16 @@ model Service {
 
   tag           String?
   isPopular     Boolean   @default(false)
+  isActive      Boolean   @default(true)
+  deletedAt     DateTime?
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   bookings      Booking[]
+  partnerServices PartnerService[]
+
+  @@index([isActive])
 }
 
 enum DisplayType {
@@ -206,9 +211,53 @@ model Partner {
   fullName   String
   phone      String
   email      String?
-  skills     String[] // corresponds to _text
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   bookings   Booking[] // relation (optional but recommended)
+  services   PartnerService[]
+  addresses  PartnerAddress[]
+}
+
+model PartnerService {
+  id         String   @id @default(uuid()) @db.Uuid
+  partnerId  String   @db.Uuid
+  serviceId  String
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  partner    Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, serviceId])
+  @@index([serviceId, isActive])
+  @@index([partnerId, isActive])
+}
+
+model PartnerAddress {
+  id            String   @id @default(uuid()) @db.Uuid
+  partnerId     String   @db.Uuid
+  label         String
+  fullAddress   String
+  latitude      Float?
+  longitude     Float?
+  area          String?
+  city          String?
+  state         String?
+  pincode       String?
+  houseNumber   String?
+  building      String?
+  landmark      String?
+  addressType   String?
+  contactName   String?
+  phone         String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  partner       Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@index([partnerId, isDefault])
 }
