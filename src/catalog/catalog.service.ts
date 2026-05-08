@@ -37,8 +37,14 @@ export class CatalogService {
     this.supabaseUrl =
       this.configService.get<string>('SUPABASE_URL') ??
       'https://znikkgrdbzagvjllimvo.supabase.co';
-    this.supabaseBucket =
-      this.configService.get<string>('SUPABASE_STORAGE_BUCKET') ?? 'imgs';
+    const rawBucket =
+      this.configService.get<string>('SUPABASE_STORAGE_BUCKET') ??
+      process.env.SUPABASE_STORAGE_BUCKET ??
+      'imgs';
+    this.supabaseBucket = rawBucket
+      .trim()
+      .replace(/,+$/, '')
+      .replace(/^\/+|\/+$/g, '');
   }
 
   async getCatalog(): Promise<CatalogResponse> {
@@ -90,12 +96,9 @@ export class CatalogService {
       return null;
     }
 
-    if (this.isAbsoluteUrl(value)) {
-      return value;
-    }
-
+    const extractedPath = this.extractStoragePath(value);
+    const normalizedPath = extractedPath ?? value.replace(/^\/+/, '');
     const trimmedBaseUrl = this.supabaseUrl.replace(/\/+$/, '');
-    const normalizedPath = value.replace(/^\/+/, '');
     const storagePath = normalizedPath.startsWith('services/')
       ? normalizedPath
       : `${defaultFolder}/${normalizedPath}`;
@@ -109,5 +112,23 @@ export class CatalogService {
 
   private isAbsoluteUrl(value: string): boolean {
     return /^https?:\/\//i.test(value);
+  }
+
+  private extractStoragePath(value: string): string | null {
+    if (!this.isAbsoluteUrl(value)) {
+      return null;
+    }
+
+    const publicPrefix = `${this.supabaseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${this.supabaseBucket}/`;
+    if (!value.startsWith(publicPrefix)) {
+      return null;
+    }
+
+    const encodedPath = value.slice(publicPrefix.length);
+    try {
+      return decodeURIComponent(encodedPath);
+    } catch {
+      return encodedPath;
+    }
   }
 }
