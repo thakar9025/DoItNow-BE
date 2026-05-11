@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -47,6 +48,7 @@ type ApiResponse<T> = {
 export class AdminServiceService {
   private static readonly SERVICE_IMAGE_FOLDER = 'services/imgs';
   private static readonly SERVICE_ICON_FOLDER = 'services/icons';
+  private readonly logger = new Logger(AdminServiceService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -530,9 +532,34 @@ export class AdminServiceService {
       },
     });
 
-    if (!response.ok && response.status !== 404) {
-      throw new InternalServerErrorException('Unable to delete file');
+    if (response.ok || response.status === 404) {
+      return;
     }
+
+    const responseBody = await response.text().catch(() => '');
+    const looksLikeNotFound = this.isSupabaseObjectNotFoundResponse(
+      response.status,
+      responseBody,
+    );
+    if (looksLikeNotFound) {
+      this.logger.warn('Supabase delete returned not-found for object', {
+        status: response.status,
+        statusText: response.statusText,
+        bucket,
+        path: normalizedPath,
+      });
+      return;
+    }
+
+    this.logger.error('Supabase delete failed', {
+      status: response.status,
+      statusText: response.statusText,
+      bucket,
+      path: normalizedPath,
+      supabaseUrl,
+      responseBody: responseBody.slice(0, 500),
+    });
+    throw new InternalServerErrorException('Unable to delete file');
   }
 
   private getSupabaseUrl(): string {
@@ -545,15 +572,34 @@ export class AdminServiceService {
   }
 
   private getSupabaseServiceRoleKey(): string {
-    const key =
+    const rawKey =
       this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
       process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!key) {
+    if (!rawKey) {
       throw new InternalServerErrorException(
         'SUPABASE_SERVICE_ROLE_KEY is not set',
       );
     }
-    return key;
+
+    // Defend against common .env copy/paste mistakes like trailing commas/quotes.
+    const normalizedKey = rawKey
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .replace(/,+$/, '');
+
+    if (!normalizedKey) {
+      throw new InternalServerErrorException(
+        'SUPABASE_SERVICE_ROLE_KEY is empty after normalization',
+      );
+    }
+
+    if (normalizedKey !== rawKey) {
+      this.logger.warn(
+        'SUPABASE_SERVICE_ROLE_KEY had extra formatting characters and was normalized',
+      );
+    }
+
+    return normalizedKey;
   }
 
   private buildPublicStorageUrl(objectPath: string): string {
@@ -636,5 +682,41 @@ export class AdminServiceService {
 
   private isAbsoluteUrl(value: string): boolean {
     return /^https?:\/\//i.test(value);
+  }
+
+  private isSupabaseObjectNotFoundResponse(
+    status: number,
+    responseBody: string,
+  ): boolean {
+    if (status === 404) {
+      return true;
+    }
+
+    if (!responseBody) {
+      return false;
+    }
+
+    try {
+      const parsed = JSON.parse(responseBody) as {
+        statusCode?: string | number;
+        error?: string;
+        message?: string;
+      };
+
+      const statusCode =
+        typeof parsed.statusCode === 'string'
+          ? Number.parseInt(parsed.statusCode, 10)
+          : parsed.statusCode;
+      const error = parsed.error?.toLowerCase();
+      const message = parsed.message?.toLowerCase();
+
+      return (
+        statusCode === 404 ||
+        error === 'not_found' ||
+        message === 'object not found'
+      );
+    } catch {
+      return false;
+    }
   }
 }
