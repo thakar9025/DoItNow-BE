@@ -8,6 +8,10 @@ import { Booking, BookingStatus, Prisma, user_role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import {
+  BookingRequestFilter,
+  ListBookingRequestsDto,
+} from './dto/list-booking-requests.dto';
 
 type CreateBookingResponse = {
   message: string;
@@ -47,6 +51,13 @@ type RequestedOrderItem = {
 type RequestedOrdersResponse = {
   message: string;
   data: RequestedOrderItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    filter: BookingRequestFilter;
+  };
 };
 
 @Injectable()
@@ -175,8 +186,27 @@ export class BookingService {
     };
   }
 
-  async getAllRequestedOrders(): Promise<RequestedOrdersResponse> {
+  async getAllRequestedOrders(
+    userId: string,
+    query: ListBookingRequestsDto,
+  ): Promise<RequestedOrdersResponse> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const filter = query.filter ?? 'all';
+    const statusWhere = this.getStatusWhereByFilter(filter);
+
+    const where: Prisma.BookingWhereInput = {
+      userId,
+      ...(statusWhere ? { status: statusWhere } : {}),
+    };
+
+    const total = await this.prisma.booking.count({ where });
+    const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
     const bookings = await this.prisma.booking.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
       include: {
         service: {
           select: {
@@ -195,7 +225,30 @@ export class BookingService {
         serviceName: booking.service.title,
         description: booking.notes ?? null,
       })),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+        filter,
+      },
     };
+  }
+
+  private getStatusWhereByFilter(
+    filter: BookingRequestFilter,
+  ): Prisma.EnumBookingStatusFilter | undefined {
+    switch (filter) {
+      case 'pending':
+        return { equals: BookingStatus.PENDING };
+      case 'approved':
+        return { equals: BookingStatus.CONFIRMED };
+      case 'completed':
+        return { equals: BookingStatus.COMPLETED };
+      case 'all':
+      default:
+        return undefined;
+    }
   }
 
   private parseAndValidateBookingDate(date: string): Date {

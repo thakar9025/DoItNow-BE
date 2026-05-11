@@ -1,7 +1,16 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { AccessTokenGuard } from '../auth/guards/access-token.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { ListBookingRequestsDto } from './dto/list-booking-requests.dto';
 import { BookingService } from './booking.service';
 
 @UseGuards(AccessTokenGuard)
@@ -25,7 +34,11 @@ export class BookingController {
   }
 
   @Get('requests')
-  getAllRequestedOrders() {
-    return this.bookingService.getAllRequestedOrders();
+  getAllRequestedOrders(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: ListBookingRequestsDto,
+  ) {
+    const userId = request.auth.payload.userId;
+    return this.bookingService.getAllRequestedOrders(userId, query);
   }
 }

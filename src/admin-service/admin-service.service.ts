@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -45,9 +46,9 @@ type ApiResponse<T> = {
 
 @Injectable()
 export class AdminServiceService {
-  private static readonly SUPABASE_BUCKET = 'imgs';
   private static readonly SERVICE_IMAGE_FOLDER = 'services/imgs';
   private static readonly SERVICE_ICON_FOLDER = 'services/icons';
+  private readonly logger = new Logger(AdminServiceService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -94,18 +95,19 @@ export class AdminServiceService {
     }
 
     const timestamp = Date.now();
-    const objectPath = `${AdminServiceService.SERVICE_IMAGE_FOLDER}/${serviceId}-${timestamp}.jpg`;
-    const imageUrl = await this.uploadFile(file, objectPath);
+    const extension = this.getFileExtensionFromMimeType(file.mimetype);
+    const objectPath = `${AdminServiceService.SERVICE_IMAGE_FOLDER}/${serviceId}-${timestamp}.${extension}`;
+    const imagePath = await this.uploadFile(file, objectPath);
 
     await this.prisma.service.update({
       where: { id: serviceId },
-      data: { imageUrl },
+      data: { imageUrl: imagePath },
       select: { id: true },
     });
 
     return {
       message: 'Image uploaded successfully',
-      data: { imageUrl },
+      data: { imageUrl: this.buildPublicStorageUrl(imagePath) },
     };
   }
 
@@ -130,18 +132,19 @@ export class AdminServiceService {
     }
 
     const timestamp = Date.now();
-    const objectPath = `${AdminServiceService.SERVICE_ICON_FOLDER}/${serviceId}-${timestamp}.jpg`;
-    const iconUrl = await this.uploadFile(file, objectPath);
+    const extension = this.getFileExtensionFromMimeType(file.mimetype);
+    const objectPath = `${AdminServiceService.SERVICE_ICON_FOLDER}/${serviceId}-${timestamp}.${extension}`;
+    const iconPath = await this.uploadFile(file, objectPath);
 
     await this.prisma.service.update({
       where: { id: serviceId },
-      data: { iconUrl },
+      data: { iconUrl: iconPath },
       select: { id: true },
     });
 
     return {
       message: 'Icon uploaded successfully',
-      data: { iconUrl },
+      data: { iconUrl: this.buildPublicStorageUrl(iconPath) },
     };
   }
 
@@ -225,8 +228,8 @@ export class AdminServiceService {
         description: body.description ?? null,
         startingPrice: body.startingPrice,
         currency: body.currency,
-        imageUrl: body.imageUrl ?? null,
-        iconUrl: body.iconUrl ?? null,
+        imageUrl: this.normalizeStoragePathInput(body.imageUrl),
+        iconUrl: this.normalizeStoragePathInput(body.iconUrl),
         displayType: body.displayType
           ? (body.displayType as DisplayType)
           : DisplayType.ICON,
@@ -268,8 +271,14 @@ export class AdminServiceService {
         body.description === undefined ? undefined : body.description ?? null,
       startingPrice: body.startingPrice,
       currency: body.currency,
-      imageUrl: body.imageUrl === undefined ? undefined : body.imageUrl ?? null,
-      iconUrl: body.iconUrl === undefined ? undefined : body.iconUrl ?? null,
+      imageUrl:
+        body.imageUrl === undefined
+          ? undefined
+          : this.normalizeStoragePathInput(body.imageUrl),
+      iconUrl:
+        body.iconUrl === undefined
+          ? undefined
+          : this.normalizeStoragePathInput(body.iconUrl),
       displayType: body.displayType
         ? (body.displayType as DisplayType)
         : undefined,
@@ -423,12 +432,7 @@ export class AdminServiceService {
 
   private normalizeStorageUrl(value: string | null): string | null {
     if (!value) return null;
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
-    }
-
-    const trimmed = value.replace(/^\/+/, '');
-    const path = trimmed.startsWith('services/') ? trimmed : null;
+    const path = this.extractStoragePath(value);
     if (!path) {
       return value;
     }
@@ -483,7 +487,8 @@ export class AdminServiceService {
       .map((segment) => encodeURIComponent(segment))
       .join('/');
 
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/${AdminServiceService.SUPABASE_BUCKET}/${encodedPath}`;
+    const bucket = this.getSupabaseStorageBucket();
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${encodedPath}`;
 
     const response = await fetch(uploadUrl, {
       method: 'POST',
@@ -499,7 +504,7 @@ export class AdminServiceService {
       throw new InternalServerErrorException('Unable to upload file');
     }
 
-    return this.buildPublicStorageUrl(normalizedPath);
+    return normalizedPath;
   }
 
   private async deleteFile(fileUrl: string): Promise<void> {
@@ -517,7 +522,8 @@ export class AdminServiceService {
       .map((segment) => encodeURIComponent(segment))
       .join('/');
 
-    const deleteUrl = `${supabaseUrl}/storage/v1/object/${AdminServiceService.SUPABASE_BUCKET}/${encodedPath}`;
+    const bucket = this.getSupabaseStorageBucket();
+    const deleteUrl = `${supabaseUrl}/storage/v1/object/${bucket}/${encodedPath}`;
 
     const response = await fetch(deleteUrl, {
       method: 'DELETE',
@@ -526,9 +532,34 @@ export class AdminServiceService {
       },
     });
 
-    if (!response.ok && response.status !== 404) {
-      throw new InternalServerErrorException('Unable to delete file');
+    if (response.ok || response.status === 404) {
+      return;
     }
+
+    const responseBody = await response.text().catch(() => '');
+    const looksLikeNotFound = this.isSupabaseObjectNotFoundResponse(
+      response.status,
+      responseBody,
+    );
+    if (looksLikeNotFound) {
+      this.logger.warn('Supabase delete returned not-found for object', {
+        status: response.status,
+        statusText: response.statusText,
+        bucket,
+        path: normalizedPath,
+      });
+      return;
+    }
+
+    this.logger.error('Supabase delete failed', {
+      status: response.status,
+      statusText: response.statusText,
+      bucket,
+      path: normalizedPath,
+      supabaseUrl,
+      responseBody: responseBody.slice(0, 500),
+    });
+    throw new InternalServerErrorException('Unable to delete file');
   }
 
   private getSupabaseUrl(): string {
@@ -541,20 +572,39 @@ export class AdminServiceService {
   }
 
   private getSupabaseServiceRoleKey(): string {
-    const key =
+    const rawKey =
       this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ??
       process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!key) {
+    if (!rawKey) {
       throw new InternalServerErrorException(
         'SUPABASE_SERVICE_ROLE_KEY is not set',
       );
     }
-    return key;
+
+    // Defend against common .env copy/paste mistakes like trailing commas/quotes.
+    const normalizedKey = rawKey
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+      .replace(/,+$/, '');
+
+    if (!normalizedKey) {
+      throw new InternalServerErrorException(
+        'SUPABASE_SERVICE_ROLE_KEY is empty after normalization',
+      );
+    }
+
+    if (normalizedKey !== rawKey) {
+      this.logger.warn(
+        'SUPABASE_SERVICE_ROLE_KEY had extra formatting characters and was normalized',
+      );
+    }
+
+    return normalizedKey;
   }
 
   private buildPublicStorageUrl(objectPath: string): string {
     const supabaseUrl = this.getSupabaseUrl();
-    const bucket = AdminServiceService.SUPABASE_BUCKET;
+    const bucket = this.getSupabaseStorageBucket();
     const encodedPath = objectPath
       .split('/')
       .map((segment) => encodeURIComponent(segment))
@@ -565,6 +615,7 @@ export class AdminServiceService {
 
   private extractStoragePath(fileUrl: string): string | null {
     const supabaseUrl = this.getSupabaseUrl();
+    const bucket = this.getSupabaseStorageBucket();
 
     if (!fileUrl.startsWith('http')) {
       const trimmed = fileUrl.replace(/^\/+/, '');
@@ -574,7 +625,7 @@ export class AdminServiceService {
       return null;
     }
 
-    const publicPrefix = `${supabaseUrl}/storage/v1/object/public/${AdminServiceService.SUPABASE_BUCKET}/`;
+    const publicPrefix = `${supabaseUrl}/storage/v1/object/public/${bucket}/`;
     if (!fileUrl.startsWith(publicPrefix)) {
       return null;
     }
@@ -584,6 +635,88 @@ export class AdminServiceService {
       return decodeURIComponent(encodedPath);
     } catch {
       return encodedPath;
+    }
+  }
+
+  private getSupabaseStorageBucket(): string {
+    const rawBucket =
+      this.configService.get<string>('SUPABASE_STORAGE_BUCKET') ??
+      process.env.SUPABASE_STORAGE_BUCKET ??
+      'imgs';
+
+    return rawBucket.trim().replace(/,+$/, '').replace(/^\/+|\/+$/g, '');
+  }
+
+  private normalizeStoragePathInput(value?: string | null): string | null {
+    if (value === undefined || value === null) {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const extractedPath = this.extractStoragePath(trimmed);
+    if (extractedPath) {
+      return extractedPath;
+    }
+
+    if (this.isAbsoluteUrl(trimmed)) {
+      throw new BadRequestException(
+        'Only storage path is allowed for image/icon fields',
+      );
+    }
+
+    return trimmed.replace(/^\/+/, '');
+  }
+
+  private getFileExtensionFromMimeType(mimeType: string): string {
+    if (mimeType === 'image/jpeg') return 'jpg';
+    if (mimeType === 'image/png') return 'png';
+    if (mimeType === 'image/webp') return 'webp';
+    if (mimeType === 'image/gif') return 'gif';
+    if (mimeType === 'image/svg+xml') return 'svg';
+    return 'jpg';
+  }
+
+  private isAbsoluteUrl(value: string): boolean {
+    return /^https?:\/\//i.test(value);
+  }
+
+  private isSupabaseObjectNotFoundResponse(
+    status: number,
+    responseBody: string,
+  ): boolean {
+    if (status === 404) {
+      return true;
+    }
+
+    if (!responseBody) {
+      return false;
+    }
+
+    try {
+      const parsed = JSON.parse(responseBody) as {
+        statusCode?: string | number;
+        error?: string;
+        message?: string;
+      };
+
+      const statusCode =
+        typeof parsed.statusCode === 'string'
+          ? Number.parseInt(parsed.statusCode, 10)
+          : parsed.statusCode;
+      const error = parsed.error?.toLowerCase();
+      const message = parsed.message?.toLowerCase();
+
+      return (
+        statusCode === 404 ||
+        error === 'not_found' ||
+        message === 'object not found'
+      );
+    } catch {
+      return false;
     }
   }
 }
