@@ -15,7 +15,7 @@ export class UsersController {
     @Body() body: SaveFcmTokenDto,
   ) {
     const userId = request.auth.payload.userId;
-    await this.usersService.saveFcmToken(userId, body.fcmToken);
+    await this.usersService.saveFcmToken(userId, body.fcmToken, body.platform);
 
     return {
       message: 'FCM token saved successfully',

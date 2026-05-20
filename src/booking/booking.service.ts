@@ -33,6 +33,7 @@ type MyBookingItem = {
   timeSlot: string;
   price: number;
   notes: string | null;
+  rejectionReason: string | null;
   createdAt: string;
 };
 
@@ -46,6 +47,7 @@ type RequestedOrderItem = {
   status: BookingStatus;
   serviceName: string;
   description: string | null;
+  rejectionReason: string | null;
 };
 
 type RequestedOrdersResponse = {
@@ -57,6 +59,38 @@ type RequestedOrdersResponse = {
     limit: number;
     totalPages: number;
     filter: BookingRequestFilter;
+  };
+};
+
+type RequestDetailsResponse = {
+  message: string;
+  data: {
+    requestId: string;
+    status: BookingStatus;
+    serviceName: string;
+    description: string | null;
+    rejectionReason: string | null;
+    scheduledAt: string;
+    address: {
+      fullAddress: string;
+    };
+    assignedWorker: {
+      id: string;
+      name: string;
+      rating: number | null;
+      avatarUrl: string | null;
+      phone: string;
+    } | null;
+  };
+};
+
+type CancelRequestResponse = {
+  message: string;
+  data: {
+    requestId: string;
+    status: BookingStatus;
+    rejectionReason: string | null;
+    cancelledAt: string | null;
   };
 };
 
@@ -155,6 +189,7 @@ export class BookingService {
           bookingId: booking.id,
           type: 'NEW_BOOKING',
         },
+        'admin',
       );
     } catch (error) {
       // Best-effort push notification; booking flow must not fail.
@@ -224,6 +259,7 @@ export class BookingService {
         status: booking.status,
         serviceName: booking.service.title,
         description: booking.notes ?? null,
+        rejectionReason: booking.rejectionReason ?? null,
       })),
       meta: {
         total,
@@ -231,6 +267,126 @@ export class BookingService {
         limit,
         totalPages,
         filter,
+      },
+    };
+  }
+
+  async getRequestDetails(
+    userId: string,
+    requestId: string,
+  ): Promise<RequestDetailsResponse> {
+    const booking = await this.prisma.booking.findFirst({
+      where: {
+        id: requestId,
+        userId,
+      },
+      include: {
+        service: {
+          select: { title: true },
+        },
+        address: {
+          select: {
+            fullAddress: true,
+            label: true,
+            houseNumber: true,
+            building: true,
+            landmark: true,
+            area: true,
+            city: true,
+            state: true,
+            pincode: true,
+          },
+        },
+        partner: {
+          select: {
+            id: true,
+            fullName: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Request not found');
+    }
+
+    const status = booking.status;
+    const shouldShowAssignedWorker =
+      status === BookingStatus.CONFIRMED || status === BookingStatus.COMPLETED;
+
+    return {
+      message: 'Request details fetched successfully',
+      data: {
+        requestId: booking.id,
+        status,
+        serviceName: booking.service.title,
+        description: booking.notes ?? null,
+        rejectionReason: booking.rejectionReason ?? null,
+        scheduledAt: this.toScheduledAtIso(booking.date, booking.timeSlot),
+        address: {
+          fullAddress: this.resolveAddress(booking.address),
+        },
+        assignedWorker: shouldShowAssignedWorker
+          ? this.resolveAssignedWorker(booking)
+          : null,
+      },
+    };
+  }
+
+  async cancelRequest(
+    userId: string,
+    requestId: string,
+    reason?: string,
+  ): Promise<CancelRequestResponse> {
+    const booking = await this.prisma.booking.findFirst({
+      where: {
+        id: requestId,
+        userId,
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Request not found');
+    }
+
+    if (
+      booking.status !== BookingStatus.PENDING &&
+      booking.status !== BookingStatus.CONFIRMED
+    ) {
+      throw new BadRequestException(
+        `Request cannot be cancelled from status ${booking.status}`,
+      );
+    }
+
+    const normalizedReason = reason?.trim() || null;
+
+    const cancelledBooking = await this.prisma.booking.update({
+      where: { id: requestId },
+      data: {
+        status: BookingStatus.CANCELLED_BY_USER,
+        rejectionReason: normalizedReason,
+        cancelledAt: new Date(),
+      },
+      select: {
+        id: true,
+        status: true,
+        rejectionReason: true,
+        cancelledAt: true,
+      },
+    });
+
+    return {
+      message: 'Request cancelled successfully',
+      data: {
+        requestId: cancelledBooking.id,
+        status: cancelledBooking.status,
+        rejectionReason: cancelledBooking.rejectionReason,
+        cancelledAt: cancelledBooking.cancelledAt?.toISOString() ?? null,
       },
     };
   }
@@ -270,6 +426,132 @@ export class BookingService {
     return parsedDate;
   }
 
+  private toScheduledAtIso(date: Date, timeSlot: string): string {
+    const parsed = this.parseTimeSlotStart(timeSlot);
+
+    if (!parsed) {
+      return date.toISOString();
+    }
+
+    const scheduledAt = new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate(),
+        parsed.hour,
+        parsed.minute,
+        0,
+        0,
+      ),
+    );
+
+    return scheduledAt.toISOString();
+  }
+
+  private parseTimeSlotStart(
+    timeSlot: string,
+  ): { hour: number; minute: number } | null {
+    if (!timeSlot) {
+      return null;
+    }
+
+    const normalized = timeSlot.trim();
+    const startPart = normalized.split('-')[0]?.trim() ?? normalized;
+
+    const twentyFourHourMatch = startPart.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (twentyFourHourMatch) {
+      return {
+        hour: Number(twentyFourHourMatch[1]),
+        minute: Number(twentyFourHourMatch[2]),
+      };
+    }
+
+    const twelveHourMatch = startPart.match(
+      /^(1[0-2]|0?[1-9]):([0-5]\d)\s*([AaPp][Mm])$/,
+    );
+    if (twelveHourMatch) {
+      const baseHour = Number(twelveHourMatch[1]) % 12;
+      const minute = Number(twelveHourMatch[2]);
+      const meridiem = twelveHourMatch[3].toUpperCase();
+
+      return {
+        hour: meridiem === 'PM' ? baseHour + 12 : baseHour,
+        minute,
+      };
+    }
+
+    return null;
+  }
+
+  private resolveAddress(address: {
+    fullAddress: string;
+    label: string;
+    houseNumber: string | null;
+    building: string | null;
+    landmark: string | null;
+    area: string | null;
+    city: string | null;
+    state: string | null;
+    pincode: string | null;
+  }): string {
+    const fullAddress = address.fullAddress?.trim();
+
+    if (fullAddress) {
+      return fullAddress;
+    }
+
+    const composedParts = [
+      address.houseNumber,
+      address.building,
+      address.landmark,
+      address.area,
+      address.city,
+      address.state,
+      address.pincode,
+    ]
+      .map((part) => part?.trim())
+      .filter((part): part is string => Boolean(part));
+
+    if (composedParts.length > 0) {
+      return composedParts.join(', ');
+    }
+
+    return address.label;
+  }
+
+  private resolveAssignedWorker(booking: {
+    partnerId: string | null;
+    partnerName: string | null;
+    partnerPhone: string | null;
+    partner: {
+      id: string;
+      fullName: string;
+      phone: string;
+    } | null;
+  }): {
+    id: string;
+    name: string;
+    rating: number | null;
+    avatarUrl: string | null;
+    phone: string;
+  } | null {
+    const workerId = booking.partner?.id ?? booking.partnerId;
+    const workerName = booking.partner?.fullName ?? booking.partnerName;
+    const workerPhone = booking.partner?.phone ?? booking.partnerPhone;
+
+    if (!workerId || !workerName || !workerPhone) {
+      return null;
+    }
+
+    return {
+      id: workerId,
+      name: workerName,
+      rating: null,
+      avatarUrl: null,
+      phone: workerPhone,
+    };
+  }
+
   private mapBooking(booking: Booking): MyBookingItem {
     return {
       id: booking.id,
@@ -280,6 +562,7 @@ export class BookingService {
       timeSlot: booking.timeSlot,
       price: booking.price,
       notes: booking.notes,
+      rejectionReason: booking.rejectionReason,
       createdAt: booking.createdAt.toISOString(),
     };
   }

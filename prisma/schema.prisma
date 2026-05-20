@@ -9,26 +9,30 @@ datasource db {
 }
 
 model User {
-  id         String   @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
-  email      String?  @unique
-  phone      String?  @unique
+  email String? @unique
+  phone String? @unique
 
-  fullName   String?
-  avatarUrl  String?
+  fullName  String?
+  avatarUrl String?
 
-  role       user_role @default(USER)
-  isActive   Boolean  @default(true)
+  role     user_role @default(USER)
+  isActive Boolean   @default(true)
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  fcmToken   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  fcmToken  String?
 
-  authProviders AuthProvider[]
-  sessions      UserSession[]
-  addresses     Address[]
-  bookings      Booking[]
+  authProviders          AuthProvider[]
+  sessions               UserSession[]
+  addresses              Address[]
+  bookings               Booking[]
+  notifications          Notification[]
+  deviceTokens           UserDeviceToken[]
+  notificationPreference UserNotificationPreference?
 }
+
 enum user_role {
   USER
   ADMIN
@@ -36,17 +40,17 @@ enum user_role {
 }
 
 model AuthProvider {
-  id                 String   @id @default(uuid()) @db.Uuid
-  userId             String   @db.Uuid
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
 
-  provider           String
-  providerUserId     String
+  provider       String
+  providerUserId String
 
-  providerEmail      String?
-  providerAvatarUrl  String?
+  providerEmail     String?
+  providerAvatarUrl String?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -84,29 +88,29 @@ model RevokedToken {
 }
 
 model Service {
-  id            String   @id
-  slug          String   @unique
-  title         String
-  subtitle      String?
-  description   String?
+  id          String  @id
+  slug        String  @unique
+  title       String
+  subtitle    String?
+  description String?
 
   startingPrice Int
   currency      String
 
-  imageUrl      String?
-  iconUrl       String?
-  displayType   DisplayType @default(ICON)
-  colorClass    String?
+  imageUrl    String?
+  iconUrl     String?
+  displayType DisplayType @default(ICON)
+  colorClass  String?
 
-  tag           String?
-  isPopular     Boolean   @default(false)
-  isActive      Boolean   @default(true)
-  deletedAt     DateTime?
+  tag       String?
+  isPopular Boolean   @default(false)
+  isActive  Boolean   @default(true)
+  deletedAt DateTime?
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  bookings      Booking[]
+  bookings        Booking[]
   partnerServices PartnerService[]
 
   @@index([isActive])
@@ -118,76 +122,76 @@ enum DisplayType {
 }
 
 model Address {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @db.Uuid
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
 
   // display
-  label         String
+  label       String
   // Denormalized string kept in DB (legacy/non-null constraint in some environments).
-  fullAddress   String
+  fullAddress String
 
   // geo (VERY IMPORTANT)
-  latitude      Float?
-  longitude     Float?
+  latitude  Float?
+  longitude Float?
 
   // structured address (from Google)
-  area          String?
-  city          String?
-  state         String?
-  pincode       String?
+  area    String?
+  city    String?
+  state   String?
+  pincode String?
 
   // user input (MOST IMPORTANT)
-  houseNumber   String?
-  building      String?
-  landmark      String?
+  houseNumber String?
+  building    String?
+  landmark    String?
 
   // metadata
-  addressType   String?   // HOME / WORK / OTHER
-  contactName   String?
-  phone         String?
+  addressType String? // HOME / WORK / OTHER
+  contactName String?
+  phone       String?
 
-  isDefault     Boolean   @default(false)
+  isDefault Boolean @default(false)
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bookings      Booking[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings Booking[]
 
   @@index([userId])
 }
 
 model Booking {
-  id          String   @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
 
-  userId      String   @db.Uuid
-  serviceId   String
-  addressId   String   @db.Uuid
+  userId    String @db.Uuid
+  serviceId String
+  addressId String @db.Uuid
 
-  date        DateTime @db.Date
-  timeSlot    String
-  phone       String
+  date     DateTime @db.Date
+  timeSlot String
+  phone    String
 
-  price       Int
-  notes       String?
+  price Int
+  notes String?
 
-  status      BookingStatus @default(PENDING)
+  status BookingStatus @default(PENDING)
 
-  partnerName      String?
-  partnerPhone     String?
-  rejectionReason  String?
-  partnerId String?  @db.Uuid
-  partner   Partner? @relation(fields: [partnerId], references: [id])
+  partnerName     String?
+  partnerPhone    String?
+  rejectionReason String?
+  partnerId       String?  @db.Uuid
+  partner         Partner? @relation(fields: [partnerId], references: [id])
 
-  confirmedAt      DateTime?
-  cancelledAt      DateTime?
+  confirmedAt DateTime?
+  cancelledAt DateTime?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user        User     @relation(fields: [userId], references: [id])
-  service     Service  @relation(fields: [serviceId], references: [id])
-  address     Address  @relation(fields: [addressId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id])
+  address Address @relation(fields: [addressId], references: [id])
 
   @@index([userId])
   @@index([status])
@@ -207,28 +211,28 @@ enum BookingStatus {
 }
 
 model Partner {
-  id         String   @id @default(uuid()) @db.Uuid
-  fullName   String
-  phone      String
-  email      String?
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  bookings   Booking[] // relation (optional but recommended)
-  services   PartnerService[]
-  addresses  PartnerAddress[]
+  id        String           @id @default(uuid()) @db.Uuid
+  fullName  String
+  phone     String
+  email     String?
+  isActive  Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  bookings  Booking[] // relation (optional but recommended)
+  services  PartnerService[]
+  addresses PartnerAddress[]
 }
 
 model PartnerService {
-  id         String   @id @default(uuid()) @db.Uuid
-  partnerId  String   @db.Uuid
-  serviceId  String
-  isActive   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  partnerId String   @db.Uuid
+  serviceId String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  partner    Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  service    Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   @@unique([partnerId, serviceId])
   @@index([serviceId, isActive])
@@ -236,28 +240,158 @@ model PartnerService {
 }
 
 model PartnerAddress {
-  id            String   @id @default(uuid()) @db.Uuid
-  partnerId     String   @db.Uuid
-  label         String
-  fullAddress   String
-  latitude      Float?
-  longitude     Float?
-  area          String?
-  city          String?
-  state         String?
-  pincode       String?
-  houseNumber   String?
-  building      String?
-  landmark      String?
-  addressType   String?
-  contactName   String?
-  phone         String?
-  isDefault     Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(uuid()) @db.Uuid
+  partnerId   String   @db.Uuid
+  label       String
+  fullAddress String
+  latitude    Float?
+  longitude   Float?
+  area        String?
+  city        String?
+  state       String?
+  pincode     String?
+  houseNumber String?
+  building    String?
+  landmark    String?
+  addressType String?
+  contactName String?
+  phone       String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  partner       Partner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
 
   @@index([partnerId])
   @@index([partnerId, isDefault])
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  payload   Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries NotificationDelivery[]
+
+  @@index([userId, createdAt])
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}
+
+model NotificationOutbox {
+  id            String                  @id @default(uuid()) @db.Uuid
+  eventType     String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  status        NotificationQueueStatus @default(PENDING)
+  attempts      Int                     @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?
+  processedAt   DateTime?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  deliveries NotificationDelivery[]
+
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([aggregateType, aggregateId, createdAt])
+  @@map("notification_outbox")
+}
+
+model NotificationDelivery {
+  id                String                     @id @default(uuid()) @db.Uuid
+  notificationId    String?                    @db.Uuid
+  outboxId          String?                    @db.Uuid
+  channel           NotificationChannel
+  recipient         String
+  providerMessageId String?
+  status            NotificationDeliveryStatus @default(PENDING)
+  attempts          Int                        @default(0)
+  error             String?
+  sentAt            DateTime?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  notification Notification?       @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  outbox       NotificationOutbox? @relation(fields: [outboxId], references: [id], onDelete: SetNull)
+
+  @@index([notificationId, channel, createdAt])
+  @@index([outboxId, channel, createdAt])
+  @@index([status, createdAt])
+  @@map("notification_deliveries")
+}
+
+model UserDeviceToken {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String         @db.Uuid
+  token      String         @unique
+  platform   DevicePlatform
+  isActive   Boolean        @default(true)
+  lastSeenAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive, updatedAt])
+  @@map("user_device_tokens")
+}
+
+model UserNotificationPreference {
+  userId                String   @id @db.Uuid
+  bookingPushEnabled    Boolean  @default(true)
+  bookingEmailEnabled   Boolean  @default(true)
+  marketingPushEnabled  Boolean  @default(false)
+  marketingEmailEnabled Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_notification_preferences")
+}
+
+enum NotificationType {
+  BOOKING_CREATED
+  BOOKING_APPROVED
+  BOOKING_REJECTED_BY_ADMIN
+  BOOKING_CANCELLED_BY_USER
+  BOOKING_COMPLETED
+  BOOKING_STATUS_CHANGED
+}
+
+enum NotificationChannel {
+  IN_APP
+  PUSH
+  EMAIL
+}
+
+enum NotificationQueueStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+  UNKNOWN
 }

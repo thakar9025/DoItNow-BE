@@ -1,62 +1,89 @@
 import * as admin from 'firebase-admin';
 
-export function initializeFirebase() {
-  console.log('[Firebase] initializeFirebase() called');
-  console.log('[Firebase] Admin apps count:', admin.apps.length);
-  
-  if (admin.apps.length > 0) {
-    console.log('[Firebase] Already initialized, skipping');
+export type FirebaseAudience = 'user' | 'admin';
+
+type FirebaseCredentialSet = {
+  projectId?: string;
+  clientEmail?: string;
+  privateKeyRaw?: string;
+};
+
+const FIREBASE_APP_NAMES: Record<FirebaseAudience, string> = {
+  user: 'user-notifications',
+  admin: 'admin-notifications',
+};
+
+function getFirebaseCredentials(audience: FirebaseAudience): FirebaseCredentialSet {
+  if (audience === 'admin') {
+    return {
+      projectId: process.env.FIREBASE_ADMIN_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID,
+      clientEmail:
+        process.env.FIREBASE_ADMIN_CLIENT_EMAIL ?? process.env.FIREBASE_CLIENT_EMAIL,
+      privateKeyRaw:
+        process.env.FIREBASE_ADMIN_PRIVATE_KEY ?? process.env.FIREBASE_PRIVATE_KEY,
+    };
+  }
+
+  return {
+    projectId: process.env.FIREBASE_USER_PROJECT_ID ?? process.env.FIREBASE_PROJECT_ID,
+    clientEmail:
+      process.env.FIREBASE_USER_CLIENT_EMAIL ?? process.env.FIREBASE_CLIENT_EMAIL,
+    privateKeyRaw:
+      process.env.FIREBASE_USER_PRIVATE_KEY ?? process.env.FIREBASE_PRIVATE_KEY,
+  };
+}
+
+export function getFirebaseAppName(audience: FirebaseAudience): string {
+  return FIREBASE_APP_NAMES[audience];
+}
+
+export function initializeFirebaseAudience(audience: FirebaseAudience): void {
+  const appName = getFirebaseAppName(audience);
+  const existingApp = admin.apps.find((app) => app?.name === appName);
+
+  if (existingApp) {
     return;
   }
 
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY;
-  
-  console.log('[Firebase] Raw env reads:');
-  console.log('  - FIREBASE_PROJECT_ID:', projectId ? `"${projectId}"` : 'undefined');
-  console.log('  - FIREBASE_CLIENT_EMAIL:', clientEmail ? `"${clientEmail}"` : 'undefined');
-  console.log('  - FIREBASE_PRIVATE_KEY:', privateKeyRaw ? `present (${privateKeyRaw.length} chars)` : 'undefined');
-
-  // Debug logging
-  console.log('[Firebase] Checking credentials...');
-  console.log('[Firebase] Project ID exists:', !!projectId);
-  console.log('[Firebase] Client Email exists:', !!clientEmail);
-  console.log('[Firebase] Private Key exists:', !!privateKeyRaw);
-  console.log('[Firebase] Project ID value:', projectId);
-  console.log('[Firebase] Client Email value:', clientEmail?.substring(0, 20) + '...');
+  const { projectId, clientEmail, privateKeyRaw } = getFirebaseCredentials(audience);
 
   if (!projectId || !clientEmail || !privateKeyRaw) {
     console.warn(
-      '[Firebase] Firebase credentials are not fully set. Push notifications will be skipped.',
+      `[Firebase] ${audience} Firebase credentials are not fully set. Push notifications will be skipped for this audience.`,
     );
     return;
   }
 
-  // Handle both literal \n strings and actual newlines in the env var
   const privateKey = privateKeyRaw
-    .replace(/\\n/g, '\n')   // Convert escaped \n to actual newlines
-    .replace(/\r\n/g, '\n')  // Normalize Windows line endings
-    .replace(/\r/g, '\n')     // Handle old Mac line endings
+    .replace(/\\n/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .trim();
 
-  // Debug: Check private key format
-  console.log('[Firebase] Private key starts with:', privateKey.substring(0, 27));
-  console.log('[Firebase] Private key ends with:', privateKey.slice(-25));
-  console.log('[Firebase] Private key has newlines:', privateKey.includes('\n'));
-
   try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        clientEmail,
-        privateKey,
-      }),
-    });
+    admin.initializeApp(
+      {
+        credential: admin.credential.cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+      },
+      appName,
+    );
 
-    console.log('[Firebase] ✅ Firebase initialized successfully');
+    console.log(
+      `[Firebase] Initialized ${audience} Firebase app "${appName}" for project "${projectId}"`,
+    );
   } catch (error) {
-    console.error('[Firebase] ❌ Failed to initialize Firebase:', error);
-    // Don't throw - let the app continue without notifications
+    console.error(
+      `[Firebase] Failed to initialize ${audience} Firebase app "${appName}"`,
+      error,
+    );
   }
+}
+
+export function initializeFirebase(): void {
+  initializeFirebaseAudience('user');
+  initializeFirebaseAudience('admin');
 }

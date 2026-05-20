@@ -108,10 +108,18 @@ In Render service settings, set these values:
   - `SUPABASE_URL`
   - `SUPABASE_STORAGE_BUCKET`
   - `SUPABASE_SERVICE_ROLE_KEY`
-- If using Firebase:
-  - `FIREBASE_PROJECT_ID`
-  - `FIREBASE_CLIENT_EMAIL`
-  - `FIREBASE_PRIVATE_KEY`
+- If using Firebase with separate user/admin apps:
+  - `FIREBASE_USER_PROJECT_ID`
+  - `FIREBASE_USER_CLIENT_EMAIL`
+  - `FIREBASE_USER_PRIVATE_KEY`
+  - `FIREBASE_ADMIN_PROJECT_ID`
+  - `FIREBASE_ADMIN_CLIENT_EMAIL`
+  - `FIREBASE_ADMIN_PRIVATE_KEY`
+
+Legacy single-project Firebase keys are still supported as fallback:
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
 
 You can use `.env.example` as a reference template.
 

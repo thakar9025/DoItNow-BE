@@ -672,11 +672,17 @@ export class AdminServiceService {
   }
 
   private getFileExtensionFromMimeType(mimeType: string): string {
-    if (mimeType === 'image/jpeg') return 'jpg';
-    if (mimeType === 'image/png') return 'png';
-    if (mimeType === 'image/webp') return 'webp';
-    if (mimeType === 'image/gif') return 'gif';
-    if (mimeType === 'image/svg+xml') return 'svg';
+    const normalizedMimeType = mimeType.toLowerCase();
+    if (normalizedMimeType === 'image/jpeg') return 'jpg';
+    if (normalizedMimeType === 'image/png') return 'png';
+    if (normalizedMimeType === 'image/webp') return 'webp';
+    if (normalizedMimeType === 'image/gif') return 'gif';
+    if (
+      normalizedMimeType === 'image/svg+xml' ||
+      normalizedMimeType === 'application/svg+xml'
+    ) {
+      return 'svg';
+    }
     return 'jpg';
   }
 

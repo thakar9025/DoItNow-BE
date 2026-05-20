@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma, User } from '@prisma/client';
+import { DevicePlatform, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type GoogleProfile = {
@@ -23,12 +23,36 @@ export class UsersService {
     });
   }
 
-  async saveFcmToken(userId: string, fcmToken: string): Promise<void> {
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { fcmToken } as Prisma.UserUncheckedUpdateInput,
-      select: { id: true },
-    });
+  async saveFcmToken(
+    userId: string,
+    fcmToken: string,
+    platform?: DevicePlatform,
+  ): Promise<void> {
+    const normalizedToken = fcmToken.trim();
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { fcmToken: normalizedToken } as Prisma.UserUncheckedUpdateInput,
+        select: { id: true },
+      }),
+      this.prisma.userDeviceToken.upsert({
+        where: { token: normalizedToken },
+        update: {
+          userId,
+          platform: platform ?? DevicePlatform.UNKNOWN,
+          isActive: true,
+          lastSeenAt: new Date(),
+        },
+        create: {
+          userId,
+          token: normalizedToken,
+          platform: platform ?? DevicePlatform.UNKNOWN,
+          isActive: true,
+          lastSeenAt: new Date(),
+        },
+      }),
+    ]);
   }
 
   async findOrCreateByGoogleProfile(profile: GoogleProfile): Promise<User> {

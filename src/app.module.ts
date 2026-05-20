@@ -13,6 +13,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AdminServiceModule,
     BookingModule,
     CatalogModule,
+    NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService],

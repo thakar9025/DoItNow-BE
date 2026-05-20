@@ -34,9 +34,10 @@ export class CatalogService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    this.supabaseUrl =
+    const rawSupabaseUrl =
       this.configService.get<string>('SUPABASE_URL') ??
       'https://znikkgrdbzagvjllimvo.supabase.co';
+    this.supabaseUrl = rawSupabaseUrl.trim().replace(/,+$/, '').replace(/\/+$/, '');
     const rawBucket =
       this.configService.get<string>('SUPABASE_STORAGE_BUCKET') ??
       process.env.SUPABASE_STORAGE_BUCKET ??
@@ -96,8 +97,14 @@ export class CatalogService {
       return null;
     }
 
+    const trimmedValue = value.trim();
     const extractedPath = this.extractStoragePath(value);
-    const normalizedPath = extractedPath ?? value.replace(/^\/+/, '');
+    if (!extractedPath && this.isAbsoluteUrl(trimmedValue)) {
+      // Preserve external/legacy absolute URLs instead of rebuilding with current bucket config.
+      return trimmedValue;
+    }
+
+    const normalizedPath = extractedPath ?? trimmedValue.replace(/^\/+/, '');
     const trimmedBaseUrl = this.supabaseUrl.replace(/\/+$/, '');
     const storagePath = normalizedPath.startsWith('services/')
       ? normalizedPath

@@ -14,7 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import {
-  FileTypeValidator,
+  FileValidator,
   MaxFileSizeValidator,
   ParseFilePipe,
 } from '@nestjs/common';
@@ -31,6 +31,29 @@ type UploadedImageFile = {
   size: number;
   buffer: Buffer;
 };
+
+class AllowedImageMimeTypeValidator extends FileValidator<{
+  allowedMimeTypes: string[];
+}> {
+  isValid(file?: UploadedImageFile): boolean {
+    if (!file?.mimetype) return false;
+    const normalizedMimeType = file.mimetype.toLowerCase().split(';')[0].trim();
+    return this.validationOptions.allowedMimeTypes.includes(normalizedMimeType);
+  }
+
+  buildErrorMessage(): string {
+    return `Validation failed (allowed file types: ${this.validationOptions.allowedMimeTypes.join(', ')})`;
+  }
+}
+
+const SERVICE_UPLOAD_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+  'application/svg+xml',
+];
 
 @UseGuards(JwtAuthGuard)
 @Controller('admin/services')
@@ -74,7 +97,9 @@ export class AdminServiceController {
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
-          new FileTypeValidator({ fileType: /^image\// }),
+          new AllowedImageMimeTypeValidator({
+            allowedMimeTypes: SERVICE_UPLOAD_MIME_TYPES,
+          }),
         ],
       }),
     )
@@ -93,7 +118,9 @@ export class AdminServiceController {
       new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({ maxSize: 5 * 1024 * 1024 }),
-          new FileTypeValidator({ fileType: /^image\// }),
+          new AllowedImageMimeTypeValidator({
+            allowedMimeTypes: SERVICE_UPLOAD_MIME_TYPES,
+          }),
         ],
       }),
     )

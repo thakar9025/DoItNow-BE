@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { NotificationService } from '../notification/notification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApproveBookingDto } from './dto/approve-booking.dto';
 import { PaginationDto } from './dto/pagination.dto';
@@ -22,7 +23,10 @@ type AdminBookingsResponse = {
 
 @Injectable()
 export class AdminBookingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   private async assertAdminAccess(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
@@ -111,7 +115,17 @@ export class AdminBookingService {
     await this.assertAdminAccess(userId);
 
     const [booking, partner] = await Promise.all([
-      this.prisma.booking.findUnique({ where: { id: bookingId } }),
+      this.prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          service: {
+            select: { title: true },
+          },
+          user: {
+            select: { id: true, fcmToken: true },
+          },
+        },
+      }),
       this.prisma.partner.findUnique({ where: { id: body.partnerId } }),
     ]);
 
@@ -142,7 +156,7 @@ export class AdminBookingService {
       );
     }
 
-    return this.prisma.booking.update({
+    const updatedBooking = await this.prisma.booking.update({
       where: { id: bookingId },
       data: {
         status: 'CONFIRMED' as unknown as Prisma.BookingUpdateInput['status'],
@@ -158,18 +172,39 @@ export class AdminBookingService {
         partner: true,
       },
     });
+
+    await this.sendStatusChangeNotification({
+      userId: booking.user.id,
+      bookingId: booking.id,
+      serviceName: booking.service.title,
+      status: 'CONFIRMED',
+      title: 'Booking Approved',
+      body: `Your ${booking.service.title} request has been approved.`,
+    });
+
+    return updatedBooking;
   }
 
   async rejectBooking(userId: string, bookingId: string, body: RejectBookingDto) {
     await this.assertAdminAccess(userId);
 
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        service: {
+          select: { title: true },
+        },
+        user: {
+          select: { id: true, fcmToken: true },
+        },
+      },
+    });
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
     }
 
-    return this.prisma.booking.update({
+    const updatedBooking = await this.prisma.booking.update({
       where: { id: bookingId },
       data: {
         status: 'CANCELLED_BY_ADMIN' as unknown as Prisma.BookingUpdateInput['status'],
@@ -183,12 +218,34 @@ export class AdminBookingService {
         partner: true,
       },
     });
+
+    await this.sendStatusChangeNotification({
+      userId: booking.user.id,
+      bookingId: booking.id,
+      serviceName: booking.service.title,
+      status: 'CANCELLED_BY_ADMIN',
+      title: 'Booking Rejected',
+      body: `Your ${booking.service.title} request was cancelled by admin.`,
+      rejectionReason: body.reason,
+    });
+
+    return updatedBooking;
   }
 
   async completeBooking(userId: string, bookingId: string) {
     await this.assertAdminAccess(userId);
 
-    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        service: {
+          select: { title: true },
+        },
+        user: {
+          select: { id: true, fcmToken: true },
+        },
+      },
+    });
 
     if (!booking) {
       throw new NotFoundException('Booking not found');
@@ -200,7 +257,7 @@ export class AdminBookingService {
       );
     }
 
-    return this.prisma.booking.update({
+    const updatedBooking = await this.prisma.booking.update({
       where: { id: bookingId },
       data: {
         status: 'COMPLETED' as unknown as Prisma.BookingUpdateInput['status'],
@@ -212,5 +269,42 @@ export class AdminBookingService {
         partner: true,
       },
     });
+
+    await this.sendStatusChangeNotification({
+      userId: booking.user.id,
+      bookingId: booking.id,
+      serviceName: booking.service.title,
+      status: 'COMPLETED',
+      title: 'Booking Completed',
+      body: `Your ${booking.service.title} request has been marked completed.`,
+    });
+
+    return updatedBooking;
+  }
+
+  private async sendStatusChangeNotification(input: {
+    userId: string;
+    bookingId: string;
+    serviceName: string;
+    status: string;
+    title: string;
+    body: string;
+    rejectionReason?: string;
+  }): Promise<void> {
+    try {
+      await this.notificationService.createBookingStatusNotification({
+        userId: input.userId,
+        bookingId: input.bookingId,
+        serviceName: input.serviceName,
+        status: input.status,
+        title: input.title,
+        message: input.body,
+        rejectionReason: input.rejectionReason,
+      });
+    } catch (error) {
+      // Best-effort push notification; booking status flow must not fail.
+      // eslint-disable-next-line no-console
+      console.error('user_push_notification_failed', error);
+    }
   }
 }
