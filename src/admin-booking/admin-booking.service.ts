@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { EmailService } from '../email/email.service';
 import { NotificationService } from '../notification/notification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApproveBookingDto } from './dto/approve-booking.dto';
@@ -26,6 +27,7 @@ export class AdminBookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async assertAdminAccess(userId: string): Promise<void> {
@@ -122,7 +124,7 @@ export class AdminBookingService {
             select: { title: true },
           },
           user: {
-            select: { id: true, fcmToken: true },
+            select: { id: true, email: true, fullName: true, fcmToken: true },
           },
         },
       }),
@@ -181,6 +183,17 @@ export class AdminBookingService {
       title: 'Booking Approved',
       body: `Your ${booking.service.title} request has been approved.`,
     });
+
+    if (booking.user.email?.trim()) {
+      await this.emailService.sendBookingEmail({
+        to: booking.user.email,
+        userName: booking.user.fullName,
+        serviceName: booking.service.title,
+        bookingId: booking.id,
+        event: 'PARTNER_ASSIGNED',
+        partnerName: partner.fullName,
+      });
+    }
 
     return updatedBooking;
   }
@@ -242,7 +255,7 @@ export class AdminBookingService {
           select: { title: true },
         },
         user: {
-          select: { id: true, fcmToken: true },
+          select: { id: true, email: true, fullName: true, fcmToken: true },
         },
       },
     });
@@ -278,6 +291,16 @@ export class AdminBookingService {
       title: 'Booking Completed',
       body: `Your ${booking.service.title} request has been marked completed.`,
     });
+
+    if (booking.user.email?.trim()) {
+      await this.emailService.sendBookingEmail({
+        to: booking.user.email,
+        userName: booking.user.fullName,
+        serviceName: booking.service.title,
+        bookingId: booking.id,
+        event: 'BOOKING_COMPLETED',
+      });
+    }
 
     return updatedBooking;
   }

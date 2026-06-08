@@ -35,6 +35,14 @@ type CreateBookingStatusNotificationInput = {
   rejectionReason?: string;
 };
 
+type NotificationPayload = {
+  bookingId?: string;
+  requestId?: string;
+  status?: string;
+  serviceName?: string;
+  rejectionReason?: string | null;
+};
+
 type ListNotificationsResult = {
   message: string;
   data: Array<{
@@ -42,6 +50,9 @@ type ListNotificationsResult = {
     type: NotificationType;
     title: string;
     message: string;
+    bookingId: string | null;
+    requestId: string | null;
+    status: string | null;
     payload: unknown;
     isRead: boolean;
     readAt: string | null;
@@ -93,6 +104,7 @@ export class NotificationService {
         message: input.message,
         payload: {
           bookingId: input.bookingId,
+          requestId: input.bookingId,
           status: input.status,
           serviceName: input.serviceName,
           rejectionReason: input.rejectionReason ?? null,
@@ -119,6 +131,7 @@ export class NotificationService {
       type: NotificationType.BOOKING_STATUS_CHANGED,
       notificationId: notification.id,
       bookingId: input.bookingId,
+      requestId: input.bookingId,
       status: input.status,
       serviceName: input.serviceName,
     };
@@ -175,16 +188,7 @@ export class NotificationService {
 
     return {
       message: 'Notifications fetched successfully',
-      data: notifications.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title,
-        message: item.message,
-        payload: item.payload,
-        isRead: item.isRead,
-        readAt: item.readAt?.toISOString() ?? null,
-        createdAt: item.createdAt.toISOString(),
-      })),
+      data: notifications.map((item) => this.mapNotificationForApi(item)),
       meta: {
         total,
         page,
@@ -196,6 +200,10 @@ export class NotificationService {
   }
 
   async markAsRead(userId: string, notificationId: string): Promise<{ message: string }> {
+    if (!this.isValidNotificationId(notificationId)) {
+      throw new NotFoundException('Notification not found');
+    }
+
     const notification = await this.prisma.notification.findFirst({
       where: { id: notificationId, userId },
       select: { id: true },
@@ -224,6 +232,54 @@ export class NotificationService {
       message: 'All notifications marked as read',
       data: { updatedCount: result.count },
     };
+  }
+
+  async createBookingRequestedNotification(input: {
+    userId: string;
+    bookingId: string;
+    serviceName: string;
+    title: string;
+    message: string;
+  }): Promise<void> {
+    await this.createBookingStatusNotification({
+      userId: input.userId,
+      bookingId: input.bookingId,
+      serviceName: input.serviceName,
+      status: 'PENDING',
+      title: input.title,
+      message: input.message,
+    });
+  }
+
+  async getAdminPushTokens(): Promise<string[]> {
+    const admins = await this.prisma.user.findMany({
+      where: {
+        role: { in: ['ADMIN', 'SUPER_ADMIN'] },
+      },
+      select: {
+        fcmToken: true,
+        deviceTokens: {
+          where: { isActive: true },
+          select: { token: true },
+        },
+      },
+    });
+
+    const tokens = new Set<string>();
+
+    for (const admin of admins) {
+      if (admin.fcmToken?.trim()) {
+        tokens.add(admin.fcmToken.trim());
+      }
+
+      for (const deviceToken of admin.deviceTokens) {
+        if (deviceToken.token?.trim()) {
+          tokens.add(deviceToken.token.trim());
+        }
+      }
+    }
+
+    return Array.from(tokens);
   }
 
   async sendPushNotification(
@@ -342,6 +398,68 @@ export class NotificationService {
     return {
       invalidTokens: mergedInvalidTokens,
       failedTokens: mergedFailedTokens,
+    };
+  }
+
+  private mapNotificationForApi(item: {
+    id: string;
+    type: NotificationType;
+    title: string;
+    message: string;
+    payload: unknown;
+    isRead: boolean;
+    readAt: Date | null;
+    createdAt: Date;
+  }) {
+    const payload = this.parseNotificationPayload(item.payload);
+    const requestId = payload?.requestId ?? payload?.bookingId ?? null;
+
+    return {
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      message: item.message,
+      bookingId: requestId,
+      requestId,
+      status: payload?.status ?? null,
+      payload: item.payload,
+      isRead: item.isRead,
+      readAt: item.readAt?.toISOString() ?? null,
+      createdAt: item.createdAt.toISOString(),
+    };
+  }
+
+  private isValidNotificationId(notificationId: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      notificationId.trim(),
+    );
+  }
+
+  private parseNotificationPayload(payload: unknown): NotificationPayload | null {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return null;
+    }
+
+    const source = payload as Record<string, unknown>;
+    const bookingId =
+      typeof source.bookingId === 'string' ? source.bookingId : undefined;
+    const requestId =
+      typeof source.requestId === 'string'
+        ? source.requestId
+        : bookingId;
+
+    return {
+      bookingId,
+      requestId,
+      status: typeof source.status === 'string' ? source.status : undefined,
+      serviceName:
+        typeof source.serviceName === 'string' ? source.serviceName : undefined,
+      rejectionReason:
+        typeof source.rejectionReason === 'string'
+          ? source.rejectionReason
+          : source.rejectionReason === null
+            ? null
+            : undefined,
     };
   }
 

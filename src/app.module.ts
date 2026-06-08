@@ -14,6 +14,7 @@ import configuration from './config/configuration';
 import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { NotificationModule } from './notification/notification.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { NotificationModule } from './notification/notification.module';
     BookingModule,
     CatalogModule,
     NotificationModule,
+    SupportModule,
   ],
   controllers: [AppController],
   providers: [AppService],

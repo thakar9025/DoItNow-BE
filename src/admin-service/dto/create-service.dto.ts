@@ -1,4 +1,7 @@
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -6,7 +9,9 @@ import {
   IsOptional,
   IsString,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { ServiceAddonGroupDto } from './service-addon.dto';
 
 const DISPLAY_TYPES = ['IMAGE', 'ICON'] as const;
 export type DisplayTypeValue = (typeof DISPLAY_TYPES)[number];
@@ -57,4 +62,11 @@ export class CreateServiceDto {
   @IsOptional()
   @IsBoolean()
   isPopular?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => ServiceAddonGroupDto)
+  addonGroups?: ServiceAddonGroupDto[];
 }

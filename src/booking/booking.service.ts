@@ -4,9 +4,11 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { Booking, BookingStatus, Prisma, user_role } from '@prisma/client';
+import { Booking, BookingStatus, Prisma } from '@prisma/client';
+import { EmailService } from '../email/email.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../notification/notification.service';
+import { validateSelectedAddons } from '../service-addon/service-addon.validation';
 import { CreateBookingDto } from './dto/create-booking.dto';
 import {
   BookingRequestFilter,
@@ -99,16 +101,17 @@ export class BookingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly emailService: EmailService,
   ) {}
 
   async createBooking(
     userId: string,
     body: CreateBookingDto,
   ): Promise<CreateBookingResponse> {
-    const [service, address, user] = await Promise.all([
+    const [service, address, user, addonGroups] = await Promise.all([
       this.prisma.service.findUnique({
         where: { id: body.serviceId },
-        select: { id: true, title: true, isActive: true },
+        select: { id: true, title: true, isActive: true, startingPrice: true },
       }),
       this.prisma.address.findFirst({
         where: { id: body.addressId, userId },
@@ -116,7 +119,18 @@ export class BookingService {
       }),
       this.prisma.user.findUnique({
         where: { id: userId },
-        select: { fullName: true },
+        select: { fullName: true, email: true },
+      }),
+      this.prisma.serviceAddonGroup.findMany({
+        where: {
+          serviceId: body.serviceId,
+          isActive: true,
+        },
+        include: {
+          addons: {
+            where: { isActive: true },
+          },
+        },
       }),
     ]);
 
@@ -132,21 +146,47 @@ export class BookingService {
     }
 
     const bookingDate = this.parseAndValidateBookingDate(body.date);
+    const pricing = validateSelectedAddons({
+      groups: addonGroups,
+      selectedAddonIds: body.selectedAddonIds ?? [],
+      basePrice: service.startingPrice,
+    });
+
+    if (pricing.totalPrice !== body.price) {
+      throw new BadRequestException(
+        'Booking price does not match selected service options. Please refresh and try again.',
+      );
+    }
 
     let booking: Booking;
     try {
-      booking = await this.prisma.booking.create({
-        data: {
-          userId,
-          serviceId: body.serviceId,
-          addressId: body.addressId,
-          date: bookingDate,
-          timeSlot: body.timeSlot,
-          phone: body.phone,
-          price: body.price,
-          notes: body.notes ?? null,
-          status: BookingStatus.PENDING,
-        },
+      booking = await this.prisma.$transaction(async (tx) => {
+        const createdBooking = await tx.booking.create({
+          data: {
+            userId,
+            serviceId: body.serviceId,
+            addressId: body.addressId,
+            date: bookingDate,
+            timeSlot: body.timeSlot,
+            phone: body.phone,
+            price: pricing.totalPrice,
+            notes: body.notes ?? null,
+            status: BookingStatus.PENDING,
+          },
+        });
+
+        if (pricing.addons.length > 0) {
+          await tx.bookingAddon.createMany({
+            data: pricing.addons.map((addon) => ({
+              bookingId: createdBooking.id,
+              addonId: addon.addonId,
+              label: addon.label,
+              price: addon.price,
+            })),
+          });
+        }
+
+        return createdBooking;
       });
     } catch (error) {
       if (
@@ -163,38 +203,57 @@ export class BookingService {
       );
     }
 
+    const userName = user?.fullName ?? 'Someone';
+    const serviceTitle = service.title;
+
     try {
-      const admins = await (this.prisma.user as any).findMany({
-        where: {
-          role: { in: [user_role.ADMIN, user_role.SUPER_ADMIN] },
-          fcmToken: { not: null },
-        },
-        select: {
-          fcmToken: true,
-        },
-      });
+      const tokens = await this.notificationService.getAdminPushTokens();
 
-      const tokens = (admins as Array<{ fcmToken: string | null }> )
-        .map((admin) => admin.fcmToken)
-        .filter((token): token is string => Boolean(token));
-
-      const userName = user?.fullName ?? 'Someone';
-      const serviceTitle = service.title;
-
-      await this.notificationService.sendPushNotification(
-        tokens,
-        'New Booking Request',
-        `${userName} requested ${serviceTitle}`,
-        {
-          bookingId: booking.id,
-          type: 'NEW_BOOKING',
-        },
-        'admin',
-      );
+      if (tokens.length > 0) {
+        await this.notificationService.sendPushNotification(
+          tokens,
+          'New Booking Request',
+          `${userName} requested ${serviceTitle}`,
+          {
+            bookingId: booking.id,
+            requestId: booking.id,
+            type: 'NEW_BOOKING',
+          },
+          'admin',
+        );
+      }
     } catch (error) {
       // Best-effort push notification; booking flow must not fail.
       // eslint-disable-next-line no-console
       console.error('push_notification_failed', error);
+    }
+
+    try {
+      await this.notificationService.createBookingRequestedNotification({
+        userId,
+        bookingId: booking.id,
+        serviceName: serviceTitle,
+        title: 'Request Submitted',
+        message: `Your ${serviceTitle} request was submitted successfully.`,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('booking_requested_notification_failed', error);
+    }
+
+    if (user?.email?.trim()) {
+      try {
+        await this.emailService.sendBookingEmail({
+          to: user.email,
+          userName: user.fullName,
+          serviceName: serviceTitle,
+          bookingId: booking.id,
+          event: 'BOOKING_REQUESTED',
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('booking_requested_email_failed', error);
+      }
     }
 
     return {
@@ -344,9 +403,13 @@ export class BookingService {
         id: requestId,
         userId,
       },
-      select: {
-        id: true,
-        status: true,
+      include: {
+        service: {
+          select: { title: true },
+        },
+        user: {
+          select: { email: true, fullName: true },
+        },
       },
     });
 
@@ -379,6 +442,38 @@ export class BookingService {
         cancelledAt: true,
       },
     });
+
+    try {
+      await this.notificationService.createBookingStatusNotification({
+        userId,
+        bookingId: booking.id,
+        serviceName: booking.service.title,
+        status: BookingStatus.CANCELLED_BY_USER,
+        title: 'Request Cancelled',
+        message: normalizedReason
+          ? `Your ${booking.service.title} request was cancelled. Reason: ${normalizedReason}`
+          : `Your ${booking.service.title} request was cancelled.`,
+        rejectionReason: normalizedReason ?? undefined,
+      });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('booking_cancelled_notification_failed', error);
+    }
+
+    if (booking.user.email?.trim()) {
+      try {
+        await this.emailService.sendBookingEmail({
+          to: booking.user.email,
+          userName: booking.user.fullName,
+          serviceName: booking.service.title,
+          bookingId: booking.id,
+          event: 'BOOKING_CANCELLED',
+        });
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('booking_cancelled_email_failed', error);
+      }
+    }
 
     return {
       message: 'Request cancelled successfully',

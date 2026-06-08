@@ -8,6 +8,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Req,
   UploadedFile,
   UseGuards,
@@ -23,6 +24,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { AdminServiceService } from './admin-service.service';
 import { CreateServiceDto } from './dto/create-service.dto';
+import { ReplaceServiceAddonsDto } from './dto/service-addon.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 
 type UploadedImageFile = {
@@ -86,6 +88,20 @@ export class AdminServiceController {
   listServices(@Req() request: AuthenticatedRequest) {
     const userId = request.auth.payload.userId;
     return this.adminServiceService.listServices(userId);
+  }
+
+  @Put(':id/addons')
+  replaceServiceAddons(
+    @Req() request: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: ReplaceServiceAddonsDto,
+  ) {
+    const userId = request.auth.payload.userId;
+    return this.adminServiceService.replaceServiceAddons(
+      userId,
+      id,
+      body.addonGroups ?? [],
+    );
   }
 
   @Post(':id/upload-image')

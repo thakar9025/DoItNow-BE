@@ -1,4 +1,4 @@
-import { Body, Controller, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AuthenticatedRequest } from '../auth/types/authenticated-request';
 import { SaveFcmTokenDto } from './dto/save-fcm-token.dto';
@@ -8,6 +8,12 @@ import { UsersService } from './users.service';
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
+
+  @Get('profile-summary')
+  getProfileSummary(@Req() request: AuthenticatedRequest) {
+    const userId = request.auth.payload.userId;
+    return this.usersService.getProfileSummary(userId);
+  }
 
   @Patch('fcm-token')
   async saveFcmToken(

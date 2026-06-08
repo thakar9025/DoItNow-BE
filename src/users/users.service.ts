@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DevicePlatform, Prisma, User } from '@prisma/client';
+import { BookingStatus, DevicePlatform, Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 type GoogleProfile = {
@@ -21,6 +21,63 @@ export class UsersService {
     return this.prisma.user.findUnique({
       where: { id },
     });
+  }
+
+  async getProfileSummary(userId: string): Promise<{
+    message: string;
+    data: {
+      completedCount: number;
+      pendingCount: number;
+      rating: number | null;
+      totalRequests: number;
+    };
+  }> {
+    const [completedCount, pendingCount, totalRequests, ratingAggregate] =
+      await Promise.all([
+        this.prisma.booking.count({
+          where: {
+            userId,
+            status: BookingStatus.COMPLETED,
+          },
+        }),
+        this.prisma.booking.count({
+          where: {
+            userId,
+            status: {
+              in: [BookingStatus.PENDING, BookingStatus.CONFIRMED],
+            },
+          },
+        }),
+        this.prisma.booking.count({
+          where: { userId },
+        }),
+        this.prisma.booking.aggregate({
+          where: {
+            userId,
+            status: BookingStatus.COMPLETED,
+            customerRating: { not: null },
+          },
+          _avg: {
+            customerRating: true,
+          },
+        }),
+      ]);
+
+    const averageRating = ratingAggregate._avg.customerRating;
+    const rating =
+      typeof averageRating === 'number' && Number.isFinite(averageRating)
+        ? Math.round(averageRating * 10) / 10
+        : null;
+
+    return {
+      message: 'Profile summary fetched successfully',
+      data: {
+        completedCount,
+        pendingCount,
+        rating,
+        totalRequests,
+      },
+    };
   }
 
   async saveFcmToken(

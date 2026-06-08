@@ -1,8 +1,10 @@
 import {
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Min,
 } from 'class-validator';
@@ -41,4 +43,9 @@ export class CreateBookingDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  selectedAddonIds?: string[];
 }

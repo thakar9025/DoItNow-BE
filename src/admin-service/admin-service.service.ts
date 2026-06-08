@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AddonSelectionType,
   BookingStatus,
   DisplayType,
   Prisma,
@@ -17,7 +18,31 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateServiceDto } from './dto/create-service.dto';
+import { ServiceAddonGroupDto } from './dto/service-addon.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
+
+type AdminAddonItem = {
+  id: string;
+  label: string;
+  description: string | null;
+  price: number;
+  currency: string;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+type AdminAddonGroup = {
+  id: string;
+  title: string;
+  helpText: string | null;
+  selectionType: AddonSelectionType;
+  minSelection: number;
+  maxSelection: number | null;
+  isRequired: boolean;
+  sortOrder: number;
+  isActive: boolean;
+  addons: AdminAddonItem[];
+};
 
 type AdminServiceItem = {
   id: string;
@@ -37,6 +62,7 @@ type AdminServiceItem = {
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  addonGroups: AdminAddonGroup[];
 };
 
 type ApiResponse<T> = {
@@ -242,6 +268,10 @@ export class AdminServiceService {
       select: { id: true },
     });
 
+    if (body.addonGroups !== undefined) {
+      await this.syncAddonGroups(created.id, body.addonGroups, body.currency);
+    }
+
     return {
       message: 'Service created successfully',
       data: { id: created.id },
@@ -300,8 +330,13 @@ export class AdminServiceService {
     const updated = await this.prisma.service.update({
       where: { id },
       data,
-      select: { id: true },
+      select: { id: true, currency: true },
     });
+
+    if (body.addonGroups !== undefined) {
+      const currency = body.currency ?? updated.currency;
+      await this.syncAddonGroups(updated.id, body.addonGroups, currency);
+    }
 
     return {
       message: 'Service updated successfully',
@@ -402,13 +437,51 @@ export class AdminServiceService {
       },
     });
 
+    const addonGroupsByServiceId = await this.loadAddonGroupsByServiceIds(
+      services.map((service) => service.id),
+    );
+
     return {
       message: 'Services fetched successfully',
-      data: services.map((service) => this.mapService(service)),
+      data: services.map((service) =>
+        this.mapService(service, addonGroupsByServiceId.get(service.id) ?? []),
+      ),
     };
   }
 
-  private mapService(service: ServiceRecord): AdminServiceItem {
+  async replaceServiceAddons(
+    userId: string,
+    serviceId: string,
+    addonGroups: ServiceAddonGroupDto[],
+    currency?: string,
+  ): Promise<ApiResponse<{ id: string }>> {
+    await this.assertAdminAccess(userId);
+
+    const existing = await this.prisma.service.findUnique({
+      where: { id: serviceId },
+      select: { id: true, currency: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Service not found');
+    }
+
+    await this.syncAddonGroups(
+      serviceId,
+      addonGroups,
+      currency ?? existing.currency,
+    );
+
+    return {
+      message: 'Service add-ons updated successfully',
+      data: { id: serviceId },
+    };
+  }
+
+  private mapService(
+    service: ServiceRecord,
+    addonGroups: AdminAddonGroup[] = [],
+  ): AdminServiceItem {
     return {
       id: service.id,
       slug: service.slug,
@@ -427,7 +500,235 @@ export class AdminServiceService {
       deletedAt: service.deletedAt ? service.deletedAt.toISOString() : null,
       createdAt: service.createdAt.toISOString(),
       updatedAt: service.updatedAt.toISOString(),
+      addonGroups,
     };
+  }
+
+  private async loadAddonGroupsByServiceIds(
+    serviceIds: string[],
+  ): Promise<Map<string, AdminAddonGroup[]>> {
+    if (serviceIds.length === 0) {
+      return new Map();
+    }
+
+    const groups = await this.prisma.serviceAddonGroup.findMany({
+      where: {
+        serviceId: { in: serviceIds },
+      },
+      include: {
+        addons: {
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    const grouped = new Map<string, AdminAddonGroup[]>();
+
+    for (const group of groups) {
+      const mappedGroup: AdminAddonGroup = {
+        id: group.id,
+        title: group.title,
+        helpText: group.helpText,
+        selectionType: group.selectionType,
+        minSelection: group.minSelection,
+        maxSelection: group.maxSelection,
+        isRequired: group.isRequired,
+        sortOrder: group.sortOrder,
+        isActive: group.isActive,
+        addons: group.addons.map((addon) => ({
+          id: addon.id,
+          label: addon.label,
+          description: addon.description,
+          price: addon.price,
+          currency: addon.currency,
+          sortOrder: addon.sortOrder,
+          isActive: addon.isActive,
+        })),
+      };
+
+      const existing = grouped.get(group.serviceId) ?? [];
+      existing.push(mappedGroup);
+      grouped.set(group.serviceId, existing);
+    }
+
+    return grouped;
+  }
+
+  private async syncAddonGroups(
+    serviceId: string,
+    addonGroups: ServiceAddonGroupDto[],
+    defaultCurrency: string,
+  ): Promise<void> {
+    this.validateAddonGroups(addonGroups);
+
+    await this.prisma.$transaction(async (tx) => {
+      const existingGroups = await tx.serviceAddonGroup.findMany({
+        where: { serviceId },
+        select: { id: true },
+      });
+
+      const incomingGroupIds = addonGroups
+        .map((group) => group.id)
+        .filter((id): id is string => Boolean(id));
+
+      const groupsToDelete = existingGroups
+        .map((group) => group.id)
+        .filter((id) => !incomingGroupIds.includes(id));
+
+      if (groupsToDelete.length > 0) {
+        await tx.serviceAddonGroup.deleteMany({
+          where: { id: { in: groupsToDelete } },
+        });
+      }
+
+      for (let groupIndex = 0; groupIndex < addonGroups.length; groupIndex += 1) {
+        const group = addonGroups[groupIndex];
+        const selectionType =
+          group.selectionType === 'SINGLE'
+            ? AddonSelectionType.SINGLE
+            : AddonSelectionType.MULTI;
+        const minSelection = group.minSelection ?? (group.isRequired ? 1 : 0);
+        const maxSelection =
+          selectionType === AddonSelectionType.SINGLE
+            ? 1
+            : group.maxSelection ?? null;
+
+        const groupData = {
+          title: group.title.trim(),
+          helpText: group.helpText?.trim() || null,
+          selectionType,
+          minSelection,
+          maxSelection,
+          isRequired: group.isRequired ?? minSelection > 0,
+          sortOrder: group.sortOrder ?? groupIndex,
+          isActive: group.isActive ?? true,
+        };
+
+        let groupId = group.id;
+        if (groupId) {
+          const existingGroup = await tx.serviceAddonGroup.findFirst({
+            where: { id: groupId, serviceId },
+            select: { id: true },
+          });
+
+          if (!existingGroup) {
+            throw new BadRequestException(
+              'One or more add-on groups do not belong to this service',
+            );
+          }
+
+          await tx.serviceAddonGroup.update({
+            where: { id: groupId },
+            data: groupData,
+          });
+        } else {
+          const createdGroup = await tx.serviceAddonGroup.create({
+            data: {
+              serviceId,
+              ...groupData,
+            },
+            select: { id: true },
+          });
+          groupId = createdGroup.id;
+        }
+
+        const existingAddons = await tx.serviceAddon.findMany({
+          where: { groupId },
+          select: { id: true },
+        });
+
+        const incomingAddonIds = group.addons
+          .map((addon) => addon.id)
+          .filter((id): id is string => Boolean(id));
+
+        const addonsToDelete = existingAddons
+          .map((addon) => addon.id)
+          .filter((id) => !incomingAddonIds.includes(id));
+
+        if (addonsToDelete.length > 0) {
+          await tx.serviceAddon.deleteMany({
+            where: { id: { in: addonsToDelete } },
+          });
+        }
+
+        for (let addonIndex = 0; addonIndex < group.addons.length; addonIndex += 1) {
+          const addon = group.addons[addonIndex];
+          const addonData = {
+            label: addon.label.trim(),
+            description: addon.description?.trim() || null,
+            price: addon.price,
+            currency: addon.currency?.trim() || defaultCurrency,
+            sortOrder: addon.sortOrder ?? addonIndex,
+            isActive: addon.isActive ?? true,
+          };
+
+          if (addon.id) {
+            const existingAddon = await tx.serviceAddon.findFirst({
+              where: { id: addon.id, groupId },
+              select: { id: true },
+            });
+
+            if (!existingAddon) {
+              throw new BadRequestException(
+                'One or more add-on options do not belong to this group',
+              );
+            }
+
+            await tx.serviceAddon.update({
+              where: { id: addon.id },
+              data: addonData,
+            });
+          } else {
+            await tx.serviceAddon.create({
+              data: {
+                groupId,
+                ...addonData,
+              },
+            });
+          }
+        }
+      }
+    });
+  }
+
+  private validateAddonGroups(addonGroups: ServiceAddonGroupDto[]): void {
+    for (const group of addonGroups) {
+      if (!group.title?.trim()) {
+        throw new BadRequestException('Each add-on group must have a title');
+      }
+
+      if (!Array.isArray(group.addons) || group.addons.length === 0) {
+        throw new BadRequestException(
+          `Add-on group "${group.title}" must include at least one option`,
+        );
+      }
+
+      for (const addon of group.addons) {
+        if (!addon.label?.trim()) {
+          throw new BadRequestException(
+            `Each add-on option in "${group.title}" must have a label`,
+          );
+        }
+      }
+
+      const selectionType = group.selectionType ?? 'MULTI';
+      const minSelection = group.minSelection ?? (group.isRequired ? 1 : 0);
+      const maxSelection =
+        selectionType === 'SINGLE' ? 1 : group.maxSelection ?? null;
+
+      if (maxSelection !== null && maxSelection < minSelection) {
+        throw new BadRequestException(
+          `Add-on group "${group.title}" has maxSelection smaller than minSelection`,
+        );
+      }
+
+      if (minSelection > group.addons.length) {
+        throw new BadRequestException(
+          `Add-on group "${group.title}" requires more selections than available options`,
+        );
+      }
+    }
   }
 
   private normalizeStorageUrl(value: string | null): string | null {

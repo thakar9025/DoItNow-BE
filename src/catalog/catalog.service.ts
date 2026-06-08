@@ -3,6 +3,25 @@ import { ConfigService } from '@nestjs/config';
 import { Service as ServiceRecord } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+export interface CatalogAddonItem {
+  id: string;
+  label: string;
+  description: string | null;
+  price: number;
+  currency: string;
+}
+
+export interface CatalogAddonGroup {
+  id: string;
+  title: string;
+  helpText: string | null;
+  selectionType: 'SINGLE' | 'MULTI';
+  minSelection: number;
+  maxSelection: number | null;
+  isRequired: boolean;
+  addons: CatalogAddonItem[];
+}
+
 export interface CatalogItem {
   id: string;
   slug: string;
@@ -18,6 +37,7 @@ export interface CatalogItem {
   colorClass: string | null;
   tag: string | null;
   isPopular: boolean;
+  addonGroups: CatalogAddonGroup[];
 }
 
 export interface CatalogResponse {
@@ -60,17 +80,91 @@ export class CatalogService {
       }),
     ]);
 
+    const serviceIds = Array.from(
+      new Set([...popularServices, ...otherServices].map((service) => service.id)),
+    );
+    const addonGroupsByServiceId = await this.loadAddonGroupsByServiceIds(serviceIds);
+
     return {
       popular: popularServices.map((service) =>
-        this.mapServiceToCatalogItem(service),
+        this.mapServiceToCatalogItem(service, addonGroupsByServiceId.get(service.id) ?? []),
       ),
       others: otherServices.map((service) =>
-        this.mapServiceToCatalogItem(service),
+        this.mapServiceToCatalogItem(service, addonGroupsByServiceId.get(service.id) ?? []),
       ),
     };
   }
 
-  private mapServiceToCatalogItem(service: ServiceRecord): CatalogItem {
+  private async loadAddonGroupsByServiceIds(
+    serviceIds: string[],
+  ): Promise<Map<string, CatalogAddonGroup[]>> {
+    if (serviceIds.length === 0) {
+      return new Map();
+    }
+
+    const groups = await this.prisma.serviceAddonGroup.findMany({
+      where: {
+        serviceId: { in: serviceIds },
+        isActive: true,
+      },
+      include: {
+        addons: {
+          where: { isActive: true },
+          orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    const grouped = new Map<string, CatalogAddonGroup[]>();
+
+    for (const group of groups) {
+      const mappedGroup: CatalogAddonGroup = {
+        id: group.id,
+        title: group.title,
+        helpText: group.helpText,
+        selectionType: group.selectionType,
+        minSelection: group.minSelection,
+        maxSelection: group.maxSelection,
+        isRequired: group.isRequired,
+        addons: group.addons.map((addon) => ({
+          id: addon.id,
+          label: addon.label,
+          description: addon.description,
+          price: addon.price,
+          currency: addon.currency,
+        })),
+      };
+
+      const existing = grouped.get(group.serviceId) ?? [];
+      existing.push(mappedGroup);
+      grouped.set(group.serviceId, existing);
+    }
+
+    return grouped;
+  }
+
+  private mapServiceToCatalogItem(
+    service: ServiceRecord,
+    addonGroups: CatalogAddonGroup[],
+  ): CatalogItem {
+    const hasAddons = addonGroups.some((group) => group.addons.length > 0);
+    const cheapestAddonTotal = addonGroups.reduce((sum, group) => {
+      if (!group.isRequired && group.minSelection === 0) {
+        return sum;
+      }
+
+      const cheapestInGroup = group.addons
+        .map((addon) => addon.price)
+        .sort((left, right) => left - right)
+        .slice(0, Math.max(group.minSelection, group.isRequired ? 1 : 0))
+        .reduce((groupSum, price) => groupSum + price, 0);
+
+      return sum + cheapestInGroup;
+    }, 0);
+
+    const displayFromPrice = service.startingPrice + cheapestAddonTotal;
+
     return {
       id: service.id,
       slug: service.slug,
@@ -79,13 +173,14 @@ export class CatalogService {
       description: service.description,
       startingPrice: service.startingPrice,
       currency: service.currency,
-      priceText: `From ₹${service.startingPrice}`,
+      priceText: hasAddons ? `From ₹${displayFromPrice}` : `From ₹${service.startingPrice}`,
       imageUrl: this.buildPublicStorageUrl(service.imageUrl, 'services/imgs'),
       iconUrl: this.buildPublicStorageUrl(service.iconUrl, 'services/icons'),
       displayType: service.displayType,
       colorClass: service.colorClass,
       tag: service.tag,
       isPopular: service.isPopular,
+      addonGroups,
     };
   }
 

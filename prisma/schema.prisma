@@ -112,8 +112,54 @@ model Service {
 
   bookings        Booking[]
   partnerServices PartnerService[]
+  addonGroups     ServiceAddonGroup[]
 
   @@index([isActive])
+}
+
+enum AddonSelectionType {
+  SINGLE
+  MULTI
+}
+
+model ServiceAddonGroup {
+  id            String             @id @default(uuid()) @db.Uuid
+  serviceId     String             @map("service_id")
+  title         String
+  helpText      String?            @map("help_text")
+  selectionType AddonSelectionType @default(MULTI) @map("selection_type")
+  minSelection  Int                @default(0) @map("min_selection")
+  maxSelection  Int?               @map("max_selection")
+  isRequired    Boolean            @default(false) @map("is_required")
+  sortOrder     Int                @default(0) @map("sort_order")
+  isActive      Boolean            @default(true) @map("is_active")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+
+  service Service        @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  addons  ServiceAddon[]
+
+  @@index([serviceId, isActive, sortOrder])
+  @@map("service_addon_groups")
+}
+
+model ServiceAddon {
+  id          String   @id @default(uuid()) @db.Uuid
+  groupId     String   @map("group_id") @db.Uuid
+  label       String
+  description String?
+  price       Int
+  currency    String   @default("INR")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  group         ServiceAddonGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  bookingAddons BookingAddon[]
+
+  @@index([groupId, isActive, sortOrder])
+  @@map("service_addons")
 }
 
 enum DisplayType {
@@ -174,6 +220,7 @@ model Booking {
 
   price Int
   notes String?
+  customerRating Float? @map("customer_rating")
 
   status BookingStatus @default(PENDING)
 
@@ -192,6 +239,7 @@ model Booking {
   user    User    @relation(fields: [userId], references: [id])
   service Service @relation(fields: [serviceId], references: [id])
   address Address @relation(fields: [addressId], references: [id])
+  addons  BookingAddon[]
 
   @@index([userId])
   @@index([status])
@@ -199,6 +247,20 @@ model Booking {
   @@index([serviceId])
   @@index([addressId])
   @@index([status, date])
+}
+
+model BookingAddon {
+  id        String  @id @default(uuid()) @db.Uuid
+  bookingId String  @map("booking_id") @db.Uuid
+  addonId   String? @map("addon_id") @db.Uuid
+  label     String
+  price     Int
+
+  booking Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  addon   ServiceAddon? @relation(fields: [addonId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId])
+  @@map("booking_addons")
 }
 
 enum BookingStatus {
@@ -394,4 +456,25 @@ enum DevicePlatform {
   IOS
   WEB
   UNKNOWN
+}
+
+model SupportFaq {
+  id        String   @id @default(uuid()) @db.Uuid
+  question  String
+  answer    String
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("support_faqs")
+}
+
+model SupportSetting {
+  id           String   @id @default("default")
+  supportEmail String   @map("support_email")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("support_settings")
 }
