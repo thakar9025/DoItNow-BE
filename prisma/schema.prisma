@@ -478,3 +478,32 @@ model SupportSetting {
 
   @@map("support_settings")
 }
+
+enum EmailQueueStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+model EmailQueue {
+  id             String           @id @default(uuid()) @db.Uuid
+  idempotencyKey String?          @unique @map("idempotency_key")
+  toEmail        String           @map("to_email")
+  subject        String
+  textBody       String           @map("text_body")
+  htmlBody       String           @map("html_body")
+  status         EmailQueueStatus @default(PENDING)
+  attempts       Int              @default(0)
+  maxAttempts    Int              @default(5) @map("max_attempts")
+  scheduledAt    DateTime         @default(now()) @map("scheduled_at")
+  lockedAt       DateTime?        @map("locked_at")
+  sentAt         DateTime?        @map("sent_at")
+  lastError      String?          @map("last_error")
+  metadata       Json?
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  @@index([status, scheduledAt, createdAt])
+  @@map("email_queue")
+}
