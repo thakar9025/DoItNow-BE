@@ -23,7 +23,20 @@ async function bootstrap() {
     // Capacitor/Ionic app WebView origins
     'capacitor://localhost',
     'ionic://localhost',
+    // Production web domains
+    'https://justdoitnow.in',
+    'https://www.justdoitnow.in',
+    'https://doitnow.in',
+    'https://www.doitnow.in',
   ]);
+
+  const extraOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const origin of extraOrigins) {
+    allowedExactOrigins.add(origin);
+  }
 
   const allowedOriginPatterns = [
     /^http:\/\/localhost(?::\d+)?$/i,
@@ -32,6 +45,8 @@ async function bootstrap() {
     /^https:\/\/127\.0\.0\.1(?::\d+)?$/i,
     /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i,
     /^https:\/\/[a-z0-9-]+\.ngrok\.io$/i,
+    // Vercel preview + production deployments
+    /^https:\/\/[a-z0-9-]+(?:-[a-z0-9]+)*\.vercel\.app$/i,
   ];
 
   // ✅ CORS CONFIG (IMPORTANT)
